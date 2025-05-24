@@ -2,53 +2,21 @@
   "version": 2,
   "builds": [
     {
-      "src": "backend/api/index.py", // Or backend/api/main.py if you named it that
+      "src": "backend/api/index.py",
       "use": "@vercel/python",
       "config": {
-        "maxLambdaSize": "50mb" // Default for Hobby, adjust if on Pro/Enterprise
+        "maxLambdaSize": "50mb"
       }
     },
     {
       "src": "frontend/package.json",
-      "use": "@vercel/next",
-      "config": {
-        "distDir": "out" // Only if you are doing `next export` for a purely static site.
-        // For a dynamic Next.js app with API routes or SSR, omit this or use ".next"
-      }
+      "use": "@vercel/next"
     }
   ],
   "rewrites": [
-    // Rewrite requests to /api/* to the Python backend serverless function
-    // This makes your backend accessible at your-frontend-domain.com/api/*
     {
-      "source": "/api/(.*)",
-      "destination": "/backend/api/index.py" // Must match the `src` of your Python build
-    },
-    // Rewrite for the health check, assuming your FastAPI healthz is at /api/v1/healthz
-    {
-      "source": "/api/v1/healthz",
+      "source": "/api/v1/:path*",
       "destination": "/backend/api/index.py"
     }
-  ],
-  "routes": [
-    // Handle Python API routes first if using rewrites for /api/*
-    {
-      "src": "/api/(.*)",
-      "dest": "/backend/api/index.py" // Must match the `src` of your Python build
-    },
-    // Then handle Next.js routes for everything else
-    {
-      "handle": "filesystem" // Serves static files from `frontend`
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/frontend/$1" // Routes to Next.js pages
-    }
-  ],
-  "env": {
-    // You can define some shared env vars here, but prefer Vercel UI for secrets
-  },
-  "github": {
-    "silent": true // Optional: less verbose Vercel bot comments on PRs
-  }
+  ]
 }
