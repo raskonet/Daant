@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+# AI Libraries (ensure compatible versions for Vercel's Python runtime)
+tf-lite  # Can be large; consider tf-lite if possible or ensure Vercel supports the size
+ultralytics
+opencv-python-headless # Use headless for server environments
+Pillow
+huggingface_hub
+numpy
+# Add any other dependencies like h5py if not transitively installed
+# h5py 
