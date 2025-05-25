@@ -2,16 +2,15 @@
 const nextConfig = {
   reactStrictMode: true,
   typescript: {
-    tsconfigPath: "./frontend/tsconfig.json",
+    tsconfigPath: "./tsconfig.json",
   },
   webpack: (config, { buildId, dev, isServer, defaultLoaders, webpack }) => {
-    config.resolve.plugins = [...(config.resolve.plugins || [])];
     config.resolve.alias = {
       ...config.resolve.alias,
-      "@": require("path").resolve(__dirname, "frontend/src"), // Manually define @ alias
+      "@": require("path").resolve(__dirname, "src"),
     };
     return config;
   },
 };
 
-export default nextConfig;
+module.exports = nextConfig;
