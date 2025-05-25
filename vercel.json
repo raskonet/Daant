@@ -9,7 +9,7 @@
       }
     },
     {
-      "src": "frontend/package.json", // This tells Vercel the context for this build is 'frontend'
+      "src": "frontend/package.json",
       "use": "@vercel/next"
     }
   ],
