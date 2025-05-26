@@ -1,15 +1,15 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  reactStrictMode: true,
-  typescript: {
-    tsconfigPath: "./tsconfig.json",
-  },
-  webpack: (config, { buildId, dev, isServer, defaultLoaders, webpack }) => {
-    config.resolve.alias = {
-      ...config.resolve.alias,
-      "@": require("path").resolve(__dirname, "src"),
-    };
-    return config;
+  rewrites: async () => {
+    return [
+      {
+        source: "/api/v1/:path*",
+        destination:
+          process.env.NODE_ENV === "development"
+            ? "http://127.0.0.1:8000/api/v1/:path*"
+            : "/backend/api/:path*",
+      },
+    ];
   },
 };
 
