@@ -1,7 +1,7 @@
 {
   "functions": {
-    "backend/api/**": {
-      "excludeFiles": "{.next,.git,node_modules}/**"
+    "api/*.py": {
+      "runtime": "python3.9"
     }
   }
 }
