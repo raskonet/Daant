@@ -404,10 +404,19 @@ export const useToolStore = create<ToolState>((set, get) => ({
       set({ aiError: "No DICOM image loaded to analyze." });
       return;
     }
+    // Clear previous error for this specific model type or general error before new run
     set((state) => ({
       isAiLoading: { ...state.isAiLoading, [modelType]: true },
-      aiError: null,
+      aiError:
+        state.aiError && state.aiError.includes(`AI for ${modelType}`)
+          ? null
+          : state.aiError, // Clears error if it's for the current model
     }));
+    // A more general approach to clearing previous error before any AI run:
+    // if (Object.values(get().isAiLoading).every(v => !v)) { // If this is the first AI model being loaded in a batch
+    //   set({ aiError: null });
+    // }
+
     try {
       const result: AiAnalysisResult = await fetchAiAnalysis(
         dicomId,
@@ -446,9 +455,22 @@ export const useToolStore = create<ToolState>((set, get) => ({
       console.error(`AI Analysis Error (${modelType}):`, error);
       let errorDetails = "Unknown error";
       if (error instanceof Error) errorDetails = error.message;
-      else if (typeof error === "string") errorDetails = error;
+      // Check if error is an Axios error and try to get more specific message
+      else if (
+        typeof error === "object" &&
+        error !== null &&
+        "response" in error
+      ) {
+        const axiosError = error as {
+          response?: { data?: { detail?: string } };
+        };
+        if (axiosError.response?.data?.detail) {
+          errorDetails = axiosError.response.data.detail;
+        }
+      } else if (typeof error === "string") errorDetails = error;
+
       set((state) => ({
-        aiError: `AI for ${modelType} is unavailable. Details: ${errorDetails}`,
+        aiError: `AI for ${modelType} failed. Details: ${errorDetails}`,
         isAiLoading: { ...state.isAiLoading, [modelType]: false },
       }));
     }
@@ -465,30 +487,24 @@ export const useToolStore = create<ToolState>((set, get) => ({
 
       if (type === "detections") {
         newAiAnnotations.detections = state.aiAnnotations.detections.map(
-          (
-            item: BoundingBox,
-          ): BoundingBox =>  // Ensure item is BoundingBox
+          (item: BoundingBox): BoundingBox =>
             item.id === idOrLabel || (item.label && item.label === idOrLabel)
-              ? { ...item, visible } // Spread ensures all BoundingBox props are kept
+              ? { ...item, visible }
               : item,
         );
       } else if (type === "segmentations") {
         newAiAnnotations.segmentations = state.aiAnnotations.segmentations.map(
-          (
-            item: SegmentationContour,
-          ): SegmentationContour =>  // Ensure item is SegmentationContour
+          (item: SegmentationContour): SegmentationContour =>
             item.id === idOrLabel || (item.label && item.label === idOrLabel)
-              ? { ...item, visible } // Spread ensures all SegmentationContour props (like points) are kept
+              ? { ...item, visible }
               : item,
         );
       } else if (type === "classifications") {
         newAiAnnotations.classifications =
           state.aiAnnotations.classifications.map(
-            (
-              item: ClassificationPrediction,
-            ): ClassificationPrediction =>  // Ensure item is ClassificationPrediction
+            (item: ClassificationPrediction): ClassificationPrediction =>
               item.id === idOrLabel || (item.label && item.label === idOrLabel)
-                ? { ...item, visible } // Spread ensures all ClassificationPrediction props are kept
+                ? { ...item, visible }
                 : item,
           );
       }
@@ -525,7 +541,7 @@ export const useToolStore = create<ToolState>((set, get) => ({
     set({
       aiAnnotations: { ...initialAiAnnotations },
       isAiLoading: { ...initialIsAiLoading },
-      aiError: null,
+      aiError: null, // Also clear any existing AI error
     });
   },
 

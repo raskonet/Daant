@@ -1,7 +1,7 @@
-from fastapi import APIRouter, HTTPException, Path
-
+# backend/app/api/v1/ai.py
 from app.models.ai_results import AiAnalysisResult
 from app.services.ai_service import process_image_with_ai
+from fastapi import APIRouter, HTTPException, Path
 
 router = APIRouter()
 
@@ -23,17 +23,25 @@ async def analyze_dicom_image(
     try:
         ai_result = await process_image_with_ai(dicom_id, model_type)
         return ai_result
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=500, detail=f"AI Model file error: {e}")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
+    except FileNotFoundError as e:  # e.g. Model file is missing
+        print(f"--- API ERROR: Model file error in ai.py, {e}")
+        raise HTTPException(status_code=500, detail=f"AI Model file error: {e}") from e
+    except ValueError as e:  # e.g. Input data issue
+        print(f"--- API ERROR: Value error in ai.py, {e}")
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except ImportError as e:  # Catch ImportError (e.g., TensorFlow not found)
+        print(f"--- API ERROR: Import error in ai.py, {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="AI processing is temporarily unavailable. Please try again later.",
+        ) from e
+    except Exception as e:  # Catch other errors.
         # Log the full error for debugging
-        print(f"Unhandled AI processing error: {e}")
+        print(f"--- UNHANDLED API processing error: {e}")
         import traceback
 
-        traceback.print_exc()
+        traceback.print_exc()  # VERY IMPORTANT - log the full traceback
         raise HTTPException(
             status_code=500,
             detail=f"An unexpected error occurred during AI processing: {type(e).__name__}",
-        )
+        ) from e
