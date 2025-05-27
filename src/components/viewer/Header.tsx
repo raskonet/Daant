@@ -1,4 +1,4 @@
-// frontend/src/components/viewer/Header.tsx
+// src/components/viewer/Header.tsx
 "use client";
 import React, { useState } from "react";
 import { Icons } from "../../components/ui/icons";
@@ -6,33 +6,19 @@ import { Button } from "../../components/ui/button";
 import { Toggle } from "../../components/ui/toggle";
 import { useDicomStore } from "../../store/dicomStore";
 import { useToolStore } from "../../store/toolStore";
-// import { shallow } from 'zustand/shallow'; // Only needed if using the shallow comparison alternative
 
 export function Header() {
   const dicomData = useDicomStore((state) => state.dicomData);
   const resetDicomStore = useDicomStore((state) => state.resetState);
-
-  // MODIFIED: Changed to individual selectors for useToolStore
   const undoLastAction = useToolStore((state) => state.undoLastAction);
   const canUndo = useToolStore((state) => state.canUndo);
   const getCanvasAsDataURL = useToolStore((state) => state.getCanvasAsDataURL);
-
-  // Alternative using shallow (if you prefer to group them and have shallow imported):
-  // const { undoLastAction, canUndo, getCanvasAsDataURL } = useToolStore(
-  //   (state) => ({
-  //     undoLastAction: state.undoLastAction,
-  //     canUndo: state.canUndo,
-  //     getCanvasAsDataURL: state.getCanvasAsDataURL,
-  //   }),
-  //   shallow
-  // );
 
   const [fmxOn, setFmxOn] = useState(true);
   const [phiOn, setPhiOn] = useState(true);
 
   const handleBackButtonClick = () => {
     if (canUndo()) {
-      // canUndo is now a direct boolean value from the store
       undoLastAction();
     } else {
       resetDicomStore();
@@ -41,11 +27,11 @@ export function Header() {
 
   const handlePrint = () => {
     if (getCanvasAsDataURL) {
-      // getCanvasAsDataURL is now directly the function or null
       const dataURL = getCanvasAsDataURL();
       if (dataURL) {
         const link = document.createElement("a");
         let filename = "dicom-export";
+
         if (dicomData) {
           if (
             phiOn &&
@@ -54,24 +40,44 @@ export function Header() {
           ) {
             filename += `_${dicomData.patientName.replace(/\s+/g, "_")}`;
           }
-          let dateStr =
-            dicomData.studyDate || new Date().toLocaleDateString("en-CA");
-          if (
-            typeof dicomData.studyDate === "string" &&
-            !/^\d{4}-\d{2}-\d{2}$/.test(dicomData.studyDate)
-          ) {
+
+          let dateStr = new Date().toLocaleDateString("en-CA"); // Default to YYYY-MM-DD of current date
+          if (dicomData.studyDate && dicomData.studyDate !== "N/A") {
             try {
-              dateStr = new Date(dicomData.studyDate).toLocaleDateString(
-                "en-CA",
+              // dicomStore provides studyDate as "Month Day, Year"
+              // We need to parse this back to a Date object to format it as YYYY-MM-DD
+              const parsedDate = new Date(dicomData.studyDate);
+              if (!isNaN(parsedDate.getTime())) {
+                // Check if date is valid
+                const year = parsedDate.getFullYear();
+                // getMonth() is 0-indexed, so add 1
+                const month = (parsedDate.getMonth() + 1)
+                  .toString()
+                  .padStart(2, "0");
+                const day = parsedDate.getDate().toString().padStart(2, "0");
+                dateStr = `${year}-${month}-${day}`;
+              } else {
+                // If parsing failed, dateStr remains current date as YYYY-MM-DD
+                console.warn(
+                  "Could not parse stored studyDate for filename, using current date:",
+                  dicomData.studyDate,
+                );
+              }
+            } catch (_error) {
+              // Changed 'e' to '_error' to satisfy no-unused-vars if not logging it
+              // Fallback, dateStr remains current date as YYYY-MM-DD
+              console.warn(
+                "Error parsing studyDate for filename, using current date:",
+                dicomData.studyDate,
+                _error,
               );
-            } catch (e) {
-              /* ignore */
             }
           }
           filename += `_${dateStr}`;
         } else {
-          filename += `_${new Date().toLocaleDateString("en-CA")}`;
+          filename += `_${new Date().toLocaleDateString("en-CA")}`; // YYYY-MM-DD format
         }
+
         link.download = `${filename}.png`;
         link.href = dataURL;
         document.body.appendChild(link);
@@ -106,8 +112,9 @@ export function Header() {
     }
   }
 
-  const studyDate = dicomData?.studyDate || "N/A";
-  const isUndoPossible = canUndo(); // Call the function obtained from the store
+  // dicomStore provides studyDate as "Month Day, Year" or "N/A"
+  const studyDateForDisplay = dicomData?.studyDate || "N/A";
+  const isUndoPossible = canUndo();
 
   return (
     <header className="bg-primary-dark text-text-primary h-16 flex items-center justify-between px-4 border-b border-border-dark shrink-0">
@@ -186,7 +193,7 @@ export function Header() {
           </div>
         )}
         <div className="ml-4 text-sm bg-secondary-dark px-3 py-1.5 rounded">
-          {studyDate}
+          {studyDateForDisplay}
         </div>
       </div>
 

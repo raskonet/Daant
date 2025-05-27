@@ -1,3 +1,4 @@
+// src/components/ui/icons.tsx
 import {
   ChevronLeft,
   UploadCloud,
@@ -18,30 +19,31 @@ import {
   MessageSquare,
   Square,
   CheckSquare,
-  Palette, // Placeholder for "Tooth Parts"
-  ListFilter, // Placeholder for Pathology type filter
-  GitCompareArrows, // Flip
-  RotateCw, // Rotate
-  Maximize2, // Fullscreen/crop related
-  Share2, // Share/connect related
+  Palette,
+  ListFilter,
+  GitCompareArrows, // For Flip and FlipHorizontal
+  RotateCw, // For Rotate
+  Maximize2, // For Fullscreen/crop related, Fit to Screen
+  Share2, // For Share/connect related
   ShieldAlert, // Placeholder for some AI finding
   Image,
-  // Placeholder for image itself
   PenTool, // Using PenTool as a substitute for Highlighter
   Type, // Lucide icon for text
-  Highlighter, // Lucide icon
   Ruler, // Lucide icon
   Trash2, // Lucide icon
-  RotateCcw, // Lucide icon
+  RotateCcw, // Lucide icon for undo or rotate counter-clockwise
+  RefreshCw, // For Reset View
+  // Import Highlighter from lucide-react if you intend to use it directly
+  // under a different key, or if PenTool is not the intended substitute.
+  // For now, assuming PenTool is the substitute for the key 'Highlighter'.
+  // Highlighter as LucideHighlighter, (if you need it under a different name)
 } from "lucide-react";
 
 export const Icons = {
   ChevronLeft,
   UploadCloud,
   Printer,
-  Highlighter: PenTool,
-  //  Type: LucideType,
-  // Ruler: LucideRuler,
+  Highlighter: PenTool, // Key 'Highlighter' uses PenTool. This was one of the conflicting points.
   HelpCircle,
   UserCircle,
   Settings2,
@@ -58,22 +60,22 @@ export const Icons = {
   MessageSquare,
   Square,
   CheckSquare,
-  Palette,
-  ListFilter,
+  Palette, // Placeholder for "Tooth Parts"
+  ListFilter, // Placeholder for Pathology type filter
   Flip: GitCompareArrows,
   Rotate: RotateCw,
-  Crop: Maximize2,
+  Crop: Maximize2, // Value for 'Crop' is Maximize2 icon
   Connect: Share2,
   Alert: ShieldAlert,
   Image,
-  RotateCw, // For "Rotate 90°"
-  FlipHorizontal: GitCompareArrows, // Or another specific icon if you prefer
-  FlipVertical: GitCompareArrows, // Or another specific icon
-  Maximize2, // For "Fit to Screen"
-  Crop: Maximize2, // From your original post, 'Crop' icon was Maximize2, you might need a dedicated crop icon from lucide
-  Type,
-  Highlighter,
-  Ruler,
+  RotateCw, // Key 'RotateCw' uses imported RotateCw. This is fine.
+  FlipHorizontal: GitCompareArrows,
+  FlipVertical: GitCompareArrows,
+  Maximize2, // Key 'Maximize2' uses imported Maximize2 (for "Fit to Screen")
+  Type, // Key 'Type' uses imported Type
+  // The second 'Highlighter,' entry that caused a duplicate key is removed.
+  Ruler, // Key 'Ruler' uses imported Ruler
   Trash2,
-  RotateCcw,
+  RotateCcw, // Used for Undo
+  RefreshCw, // Used for Reset View
 };
