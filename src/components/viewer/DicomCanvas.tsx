@@ -972,7 +972,7 @@ export function DicomCanvas() {
                   const newPointerX = e.target.x();
                   const newPointerY = e.target.y();
                   if (!cropBounds || !image) return;
-                  let newBounds = { ...cropBounds };
+                  const newBounds = { ...cropBounds };
                   const MIN_SIZE = Math.max(
                     10,
                     image.width / 50,
