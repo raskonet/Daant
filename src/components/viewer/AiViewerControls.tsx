@@ -1,13 +1,17 @@
-// frontend/src/components/viewer/AiViewerControls.tsx
+// src/components/viewer/AiViewerControls.tsx
 "use client";
 import React, { useState } from "react";
 import { Icons } from "../../components/ui/icons";
-// Button component is not used in this version for feedback, can be added back if needed
-// import { Button } from "@/components/ui/button";
 import { Toggle } from "../../components/ui/toggle";
 import { Checkbox } from "../../components/ui/checkbox";
 import { useToolStore } from "../../store/toolStore";
-import { AiStoreAnnotations } from "../../types/ai"; // Ensure this path is correct
+// Ensure your specific AI item types are imported from your types file
+import {
+  AiStoreAnnotations,
+  BoundingBox,
+  ClassificationPrediction,
+  SegmentationContour,
+} from "../../types/ai";
 
 interface FindingItemProps {
   label: string;
@@ -30,20 +34,16 @@ const FindingItem: React.FC<FindingItemProps> = ({
 
   let count = 0;
   if (modelType === "detections") {
-    // Count visible detections matching the specific AI label
     count = aiAnnotations.detections.filter(
-      (d) => d.label === aiLabelKey && d.visible,
+      (d: BoundingBox) => d.label === aiLabelKey && d.visible,
     ).length;
   } else if (modelType === "classifications") {
-    // Count visible classifications matching the specific AI label
     count = aiAnnotations.classifications.filter(
-      (c) => c.label === aiLabelKey && c.visible,
+      (c: ClassificationPrediction) => c.label === aiLabelKey && c.visible,
     ).length;
   } else if (modelType === "segmentations") {
-    // Count visible segmentations (often a generic label like "Tooth Segment")
-    // If segmentation labels are more specific, this logic might need adjustment
     count = aiAnnotations.segmentations.filter(
-      (s) =>
+      (s: SegmentationContour) =>
         (s.label === aiLabelKey || aiLabelKey === "Tooth Segment") && s.visible,
     ).length;
   }
@@ -54,7 +54,7 @@ const FindingItem: React.FC<FindingItemProps> = ({
         <Checkbox
           checked={isChecked}
           onCheckedChange={onCheckedChange}
-          id={`ai-finding-${modelType}-${aiLabelKey.replace(/\s+/g, "-").toLowerCase()}`} // More unique ID
+          id={`ai-finding-${modelType}-${aiLabelKey.replace(/\s+/g, "-").toLowerCase()}`}
           className="mr-2"
         />
         <label
@@ -88,17 +88,13 @@ export function AiViewerControls() {
   const [pathologyOpen, setPathologyOpen] = useState(true);
   const [segmentationOpen, setSegmentationOpen] = useState(true);
 
-  // This state tracks the checked status of the UI checkboxes for findings
   const [findingsDisplayConfig, setFindingsDisplayConfig] = useState<
     Record<string, { checked: boolean; modelType: keyof AiStoreAnnotations }>
   >({
-    // Classification labels (match UI label and aiLabelKey)
-    "Calculus (Classified)": { checked: true, modelType: "classifications" }, // UI Label: "Calculus (Classified)", aiLabelKey in store: "Calculus"
-    "Caries (Classified)": { checked: true, modelType: "classifications" }, // UI Label: "Caries (Classified)", aiLabelKey in store: "Caries"
-    // Detection labels
-    "Caries (Detected)": { checked: true, modelType: "detections" }, // UI Label: "Caries (Detected)", aiLabelKey in store: "Caries"
-    // Segmentation labels
-    "Tooth Segments": { checked: true, modelType: "segmentations" }, // UI Label: "Tooth Segments", aiLabelKey in store: "Tooth Segment"
+    "Calculus (Classified)": { checked: true, modelType: "classifications" },
+    "Caries (Classified)": { checked: true, modelType: "classifications" },
+    "Caries (Detected)": { checked: true, modelType: "detections" },
+    "Tooth Segments": { checked: true, modelType: "segmentations" },
   });
 
   const handleFindingVisibilityChange = (
@@ -112,24 +108,28 @@ export function AiViewerControls() {
       [uiLabel]: { ...prev[uiLabel], checked: isChecked },
     }));
 
-    // Update visibility of all matching AI annotations in the store
     if (modelType === "detections") {
       aiAnnotations.detections
-        .filter((d) => d.label === aiLabelKey)
-        .forEach((d) => {
+        .filter((d: BoundingBox) => d.label === aiLabelKey)
+        .forEach((d: BoundingBox) => {
+          // MODIFIED: Explicitly type 'd'
           setAiAnnotationVisibility("detections", d.id, isChecked);
         });
     } else if (modelType === "classifications") {
       aiAnnotations.classifications
-        .filter((c) => c.label === aiLabelKey)
-        .forEach((c) => {
+        .filter((c: ClassificationPrediction) => c.label === aiLabelKey)
+        .forEach((c: ClassificationPrediction) => {
+          // MODIFIED: Explicitly type 'c'
           setAiAnnotationVisibility("classifications", c.id, isChecked);
         });
     } else if (modelType === "segmentations") {
-      // For segmentations, aiLabelKey is often generic like "Tooth Segment"
       aiAnnotations.segmentations
-        .filter((s) => s.label === aiLabelKey || aiLabelKey === "Tooth Segment")
-        .forEach((s) => {
+        .filter(
+          (s: SegmentationContour) =>
+            s.label === aiLabelKey || aiLabelKey === "Tooth Segment",
+        )
+        .forEach((s: SegmentationContour) => {
+          // MODIFIED: Explicitly type 's'
           setAiAnnotationVisibility("segmentations", s.id, isChecked);
         });
     }
@@ -138,13 +138,12 @@ export function AiViewerControls() {
   const handleMainAiToggle = (pressed: boolean) => {
     setAiViewerOn(pressed);
     if (pressed) {
-      useToolStore.setState({ aiError: null }); // Clear previous errors when retrying
-      // Optionally, only run if annotations are empty or based on some other logic
+      useToolStore.setState({ aiError: null });
       runAiAnalysis("detection");
       runAiAnalysis("segmentation");
       runAiAnalysis("classification");
     } else {
-      clearAiAnnotations(); // This also clears aiError and loading states in store
+      clearAiAnnotations();
     }
   };
 
@@ -178,8 +177,6 @@ export function AiViewerControls() {
     });
   };
 
-  // Define UI items. `aiLabelKey` must match the label from your backend model output for counts/visibility.
-  // `uiLabel` is what's shown in the UI and used as key in `findingsDisplayConfig`.
   const pathologyItemsConfig = [
     {
       uiLabel: "Calculus (Classified)",
@@ -217,8 +214,6 @@ export function AiViewerControls() {
 
   return (
     <div className="w-64 bg-primary-dark text-text-primary flex flex-col shrink-0 h-full">
-      {" "}
-      {/* Ensure full height */}
       <div className="p-3 border-b border-border-dark">
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-sm font-semibold">AI Viewer</h2>
@@ -246,12 +241,8 @@ export function AiViewerControls() {
           </p>
         )}
       </div>
-      {/* Only show details if AI Viewer is on AND not loading AND no critical error */}
       {aiViewerOn && !anyAiLoading && !aiError && (
         <div className="flex-grow overflow-y-auto">
-          {" "}
-          {/* Allows scrolling if content exceeds height */}
-          {/* Pathology Section */}
           <div className="border-b border-border-dark">
             <div
               role="button"
@@ -270,7 +261,6 @@ export function AiViewerControls() {
               <div className="flex items-center">
                 <Checkbox
                   checked={pathologyOpen}
-                  // Clicking checkbox directly also toggles section
                   onCheckedChange={(checked) =>
                     handleSectionToggle("pathology", Boolean(checked))
                   }
@@ -296,7 +286,7 @@ export function AiViewerControls() {
                     label={item.uiLabel}
                     colorClass={item.colorClass}
                     modelType={item.modelType}
-                    aiLabelKey={item.aiLabelKey} // This is the key used for matching in store
+                    aiLabelKey={item.aiLabelKey}
                     isChecked={
                       findingsDisplayConfig[item.uiLabel]?.checked ?? true
                     }
@@ -313,7 +303,6 @@ export function AiViewerControls() {
               </div>
             )}
           </div>
-          {/* Segmentation Section */}
           <div className="border-b border-border-dark">
             <div
               role="button"
@@ -353,8 +342,6 @@ export function AiViewerControls() {
             </div>
             {segmentationOpen && (
               <div id="segmentation-section-items">
-                {" "}
-                {/* Changed ID to be more specific */}
                 {segmentationItemsConfig.map((item) => (
                   <FindingItem
                     key={item.uiLabel}
@@ -380,13 +367,6 @@ export function AiViewerControls() {
           </div>
         </div>
       )}
-      {/* For example: */}
-      {/* {aiViewerOn && !anyAiLoading && !aiError && (
-        <div className="p-4 border-t border-border-dark bg-secondary-dark/20 relative mt-auto">
-          <h3 className="text-sm font-semibold mb-2">Help us refine our AI</h3>
-           ... rest of feedback UI ... 
-        </div>
-      )} */}
     </div>
   );
 }

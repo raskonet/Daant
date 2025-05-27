@@ -1,13 +1,14 @@
-// frontend/src/store/toolStore.ts
+// src/store/toolStore.ts
 import { create } from "zustand";
-import { fetchAiAnalysis } from "@/services/api";
+// Using relative paths
+import { fetchAiAnalysis } from "../services/api";
 import {
   AiAnalysisResult,
   AiStoreAnnotations,
-  BoundingBox, // Assuming this is the type from @/types/ai with id, visible
-  SegmentationContour, // Assuming this is the type from @/types/ai with id, visible
-  ClassificationPrediction, // Assuming this is the type from @/types/ai with id, visible
-} from "@/types/ai";
+  BoundingBox,
+  SegmentationContour,
+  ClassificationPrediction,
+} from "../types/ai"; // Ensure these types have 'id', 'label' (optional), 'visible', and other specific props like 'points'
 import { useDicomStore } from "./dicomStore";
 
 // --- Base Annotation Types (User-drawn) ---
@@ -64,15 +65,29 @@ interface UndoableState {
 }
 
 // --- Main ToolStore State Interface ---
-interface ToolState {
+export interface ToolState {
   imageFilters: ImageFiltersState;
+  imageTransformations: ImageTransformationsState;
+  cropBounds: CropBounds | null;
+  annotations: Annotation[];
+  activeAnnotationTool: ActiveAnnotationTool;
+  showAnnotations: boolean;
+  isDrawing: boolean;
+  currentDrawingPoints: number[];
+  toolUIState: ToolUIState;
+  getCanvasAsDataURL: (() => string | undefined) | null;
+  undoStack: UndoableState[];
+  aiAnnotations: AiStoreAnnotations;
+  isAiLoading: Record<"detection" | "segmentation" | "classification", boolean>;
+  aiError: string | null;
+
+  // Actions
   setImageFilter: <K extends keyof ImageFiltersState>(
     filter: K,
     value: ImageFiltersState[K],
   ) => void;
   toggleInvertFilter: () => void;
   resetImageFilters: () => void;
-  imageTransformations: ImageTransformationsState;
   setImageTransformation: <K extends keyof ImageTransformationsState>(
     transformation: K,
     value: ImageTransformationsState[K],
@@ -86,10 +101,7 @@ interface ToolState {
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
-  cropBounds: CropBounds | null;
   setCropBounds: (bounds: CropBounds | null) => void;
-  annotations: Annotation[];
-  activeAnnotationTool: ActiveAnnotationTool;
   setActiveAnnotationTool: (tool: ActiveAnnotationTool) => void;
   addAnnotation: (annotationData: Omit<Annotation, "id">) => string;
   updateAnnotation: (
@@ -97,10 +109,7 @@ interface ToolState {
     updates: Partial<Omit<Annotation, "id" | "type">>,
   ) => void;
   clearAllAnnotations: () => void;
-  showAnnotations: boolean;
   setShowAnnotations: (show: boolean) => void;
-  isDrawing: boolean;
-  currentDrawingPoints: number[];
   startCurrentDrawing: (point: { x: number; y: number }) => void;
   addPointToCurrentDrawing: (point: { x: number; y: number }) => void;
   finishCurrentPathAnnotation: (
@@ -116,21 +125,15 @@ interface ToolState {
     color: string,
     fontSize: number,
   ) => void;
-  toolUIState: ToolUIState;
   setToolUIVisibility: <K extends keyof ToolUIState>(
     uiElement: K,
     visible: boolean,
   ) => void;
   toggleToolUIVisibility: <K extends keyof ToolUIState>(uiElement: K) => void;
-  getCanvasAsDataURL: (() => string | undefined) | null;
   setCanvasExporter: (exporter: (() => string | undefined) | null) => void;
-  undoStack: UndoableState[];
   pushToUndoStack: () => void;
   undoLastAction: () => void;
   canUndo: () => boolean;
-  aiAnnotations: AiStoreAnnotations;
-  isAiLoading: Record<"detection" | "segmentation" | "classification", boolean>;
-  aiError: string | null;
   runAiAnalysis: (
     modelType: "detection" | "segmentation" | "classification",
   ) => Promise<void>;
@@ -142,12 +145,13 @@ interface ToolState {
   toggleAllAiVisibility: (
     modelType: keyof AiStoreAnnotations,
     visible: boolean,
-  ) => void; // Changed modelType to keyof AiStoreAnnotations
+  ) => void;
   clearAiAnnotations: () => void;
   resetAllFiltersAndTransforms: () => void;
   resetAllToolRelatedState: () => void;
 }
 
+// --- Initial State Values ---
 export const initialImageFilters: ImageFiltersState = {
   brightness: 0,
   contrast: 0,
@@ -160,7 +164,7 @@ const initialTransformations: ImageTransformationsState = {
   flipX: false,
   flipY: false,
 };
-const initialToolUIState: ToolUIState = {
+export const initialToolUIState: ToolUIState = {
   showBrightnessContrastPanel: false,
   showZoomPanel: false,
   showCropInterface: false,
@@ -177,18 +181,21 @@ const initialIsAiLoading = {
   classification: false,
 };
 
-const getCurrentUndoableState = (get: () => ToolState): UndoableState => ({
-  imageFilters: { ...get().imageFilters },
-  imageTransformations: { ...get().imageTransformations },
-  annotations: [...get().annotations.map((ann) => ({ ...ann }))],
-  cropBounds: get().cropBounds ? { ...get().cropBounds } : null,
-});
+const getCurrentUndoableState = (get: () => ToolState): UndoableState => {
+  const currentCropBounds = get().cropBounds;
+  return {
+    imageFilters: { ...get().imageFilters },
+    imageTransformations: { ...get().imageTransformations },
+    annotations: [...get().annotations.map((ann) => ({ ...ann }))],
+    cropBounds: currentCropBounds ? { ...currentCropBounds } : null,
+  };
+};
 
 export const useToolStore = create<ToolState>((set, get) => ({
   imageFilters: { ...initialImageFilters },
   imageTransformations: { ...initialTransformations },
-  annotations: [...initialUserAnnotations],
   cropBounds: null,
+  annotations: [...initialUserAnnotations],
   activeAnnotationTool: null,
   showAnnotations: true,
   isDrawing: false,
@@ -199,30 +206,6 @@ export const useToolStore = create<ToolState>((set, get) => ({
   aiAnnotations: { ...initialAiAnnotations },
   isAiLoading: { ...initialIsAiLoading },
   aiError: null,
-
-  pushToUndoStack: () => {
-    const currentState = getCurrentUndoableState(get);
-    set((state) => ({
-      undoStack: [...state.undoStack.slice(-19), currentState],
-    }));
-  },
-  undoLastAction: () => {
-    const stack = get().undoStack;
-    if (stack.length > 0) {
-      const prevState = stack[stack.length - 1];
-      set({
-        imageFilters: { ...prevState.imageFilters },
-        imageTransformations: { ...prevState.imageTransformations },
-        annotations: [...prevState.annotations.map((ann) => ({ ...ann }))],
-        cropBounds: prevState.cropBounds ? { ...prevState.cropBounds } : null,
-        undoStack: stack.slice(0, -1),
-        isDrawing: false,
-        currentDrawingPoints: [],
-        activeAnnotationTool: null,
-      });
-    }
-  },
-  canUndo: () => get().undoStack.length > 0,
 
   setImageFilter: (filter, value) => {
     get().pushToUndoStack();
@@ -356,7 +339,7 @@ export const useToolStore = create<ToolState>((set, get) => ({
       color,
       strokeWidth,
     };
-    if (type === "measurement") {
+    if (type === "measurement" && currentDrawingPoints.length >= 4) {
       annotationData.text = displayText || "N/A";
       annotationData.textPosition = {
         x:
@@ -390,6 +373,30 @@ export const useToolStore = create<ToolState>((set, get) => ({
       },
     })),
   setCanvasExporter: (exporter) => set({ getCanvasAsDataURL: exporter }),
+
+  pushToUndoStack: () => {
+    const currentState = getCurrentUndoableState(get);
+    set((state) => ({
+      undoStack: [...state.undoStack.slice(-19), currentState],
+    }));
+  },
+  undoLastAction: () => {
+    const stack = get().undoStack;
+    if (stack.length > 0) {
+      const prevState = stack[stack.length - 1];
+      set({
+        imageFilters: { ...prevState.imageFilters },
+        imageTransformations: { ...prevState.imageTransformations },
+        annotations: [...prevState.annotations.map((ann) => ({ ...ann }))],
+        cropBounds: prevState.cropBounds ? { ...prevState.cropBounds } : null,
+        undoStack: stack.slice(0, -1),
+        isDrawing: false,
+        currentDrawingPoints: [],
+        activeAnnotationTool: null,
+      });
+    }
+  },
+  canUndo: () => get().undoStack.length > 0,
 
   runAiAnalysis: async (modelType) => {
     const dicomId = useDicomStore.getState().dicomData?.id;
@@ -436,18 +443,18 @@ export const useToolStore = create<ToolState>((set, get) => ({
         };
       });
     } catch (error: unknown) {
-      // Changed 'any' to 'unknown'
       console.error(`AI Analysis Error (${modelType}):`, error);
       let errorDetails = "Unknown error";
       if (error instanceof Error) errorDetails = error.message;
       else if (typeof error === "string") errorDetails = error;
-
       set((state) => ({
         aiError: `AI for ${modelType} is unavailable. Details: ${errorDetails}`,
         isAiLoading: { ...state.isAiLoading, [modelType]: false },
       }));
     }
   },
+
+  // MODIFIED: Removed generic updateItems and handle each type specifically
   setAiAnnotationVisibility: (
     type: keyof AiStoreAnnotations,
     idOrLabel: string,
@@ -455,40 +462,45 @@ export const useToolStore = create<ToolState>((set, get) => ({
   ) => {
     set((state) => {
       const newAiAnnotations = { ...state.aiAnnotations };
-      // Helper function to update items in an array
-      const updateItems = <
-        T extends { id: string; label?: string; visible: boolean },
-      >(
-        items: T[],
-      ): T[] => {
-        return items.map((item) =>
-          item.id === idOrLabel || (item.label && item.label === idOrLabel)
-            ? { ...item, visible }
-            : item,
-        );
-      };
 
-      if (type === "detections")
-        newAiAnnotations.detections = updateItems(
-          state.aiAnnotations.detections,
+      if (type === "detections") {
+        newAiAnnotations.detections = state.aiAnnotations.detections.map(
+          (
+            item: BoundingBox,
+          ): BoundingBox =>  // Ensure item is BoundingBox
+            item.id === idOrLabel || (item.label && item.label === idOrLabel)
+              ? { ...item, visible } // Spread ensures all BoundingBox props are kept
+              : item,
         );
-      else if (type === "segmentations")
-        newAiAnnotations.segmentations = updateItems(
-          state.aiAnnotations.segmentations,
+      } else if (type === "segmentations") {
+        newAiAnnotations.segmentations = state.aiAnnotations.segmentations.map(
+          (
+            item: SegmentationContour,
+          ): SegmentationContour =>  // Ensure item is SegmentationContour
+            item.id === idOrLabel || (item.label && item.label === idOrLabel)
+              ? { ...item, visible } // Spread ensures all SegmentationContour props (like points) are kept
+              : item,
         );
-      else if (type === "classifications")
-        newAiAnnotations.classifications = updateItems(
-          state.aiAnnotations.classifications,
-        );
+      } else if (type === "classifications") {
+        newAiAnnotations.classifications =
+          state.aiAnnotations.classifications.map(
+            (
+              item: ClassificationPrediction,
+            ): ClassificationPrediction =>  // Ensure item is ClassificationPrediction
+              item.id === idOrLabel || (item.label && item.label === idOrLabel)
+                ? { ...item, visible } // Spread ensures all ClassificationPrediction props are kept
+                : item,
+          );
+      }
 
       return { aiAnnotations: newAiAnnotations };
     });
   },
+
   toggleAllAiVisibility: (
     modelType: keyof AiStoreAnnotations,
     visible: boolean,
   ) => {
-    // Ensured modelType is keyof AiStoreAnnotations
     set((state) => {
       const newAiAnns = { ...state.aiAnnotations };
       if (modelType === "detections")
@@ -543,6 +555,7 @@ export const useToolStore = create<ToolState>((set, get) => ({
   },
 }));
 
+// --- Utility Konva Mappers ---
 export const mapBrightnessToKonva = (uiBrightness: number): number =>
   uiBrightness / 100;
 export const mapContrastToKonva = (uiContrast: number): number => uiContrast;

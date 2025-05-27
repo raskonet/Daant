@@ -1,6 +1,6 @@
 import axios from "axios";
-import { ImagePayload } from "@/types"; // Assuming DicomMeta, etc. are here
-import { AiAnalysisResult } from "@/types/ai";
+import { ImagePayload } from "../types"; // Assuming DicomMeta, etc. are here
+import { AiAnalysisResult } from "../types/ai";
 
 const apiClient = axios.create({
   // Set baseURL to "/" or an empty string.

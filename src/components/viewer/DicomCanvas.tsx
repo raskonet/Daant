@@ -1,4 +1,4 @@
-// frontend/src/components/viewer/DicomCanvas.tsx
+// src/components/viewer/DicomCanvas.tsx
 "use client";
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
@@ -7,34 +7,40 @@ import {
   Image as KonvaImage,
   Line,
   Text,
-  Rect as KonvaRect, // Renamed to avoid conflict if used for AI boxes
+  Rect as KonvaRect,
   Circle,
   Group,
-  Label, // For AI Text with background
-  Tag, // For AI Text with background
+  Label,
+  Tag,
 } from "react-konva";
 import Konva from "konva";
-import { useDicomStore } from "@/store/dicomStore";
+import { useDicomStore } from "../../store/dicomStore";
+
 import {
   useToolStore,
   mapBrightnessToKonva,
   mapContrastToKonva,
   initialImageFilters as defaultImageFilters,
-} from "@/store/toolStore";
-import { Icons } from "@/components/ui/icons";
+} from "../../store/toolStore";
+
+import { Icons } from "../../components/ui/icons";
+
+import {
+  BoundingBox,
+  SegmentationContour,
+  ClassificationPrediction,
+} from "../../types/ai";
+// import { BoundingBox, ... } from "@/types/ai"; // If your alias is working
 
 // Define AI annotation colors (can be moved to a theme/config file)
 const AI_COLORS: Record<string, string> = {
-  // Detection defaults and specific labels
-  detection_default: "rgba(239, 68, 68, 0.9)", // Tailwind red-500
-  Caries: "rgba(249, 115, 22, 0.9)", // Tailwind orange-500
-  Calculus_detection: "rgba(168, 85, 247, 0.9)", // Tailwind purple-500
-  // Segmentation defaults and specific labels
-  segmentation_default: "rgba(34, 197, 94, 0.7)", // Tailwind green-500
-  "Tooth Segment": "rgba(59, 130, 246, 0.7)", // Tailwind blue-500
-  // Classification defaults
-  classification_default: "rgba(14, 165, 233, 0.9)", // Tailwind sky-500
-  Calculus: "rgba(139, 92, 246, 0.9)", // Tailwind violet-500 (classification calculus)
+  detection_default: "rgba(239, 68, 68, 0.9)",
+  Caries: "rgba(249, 115, 22, 0.9)",
+  Calculus_detection: "rgba(168, 85, 247, 0.9)",
+  segmentation_default: "rgba(34, 197, 94, 0.7)",
+  "Tooth Segment": "rgba(59, 130, 246, 0.7)",
+  classification_default: "rgba(14, 165, 233, 0.9)",
+  Calculus: "rgba(139, 92, 246, 0.9)",
 };
 
 export function DicomCanvas() {
@@ -49,7 +55,7 @@ export function DicomCanvas() {
     imageTransformations,
     setImageTransformation,
     annotations,
-    showAnnotations, // User annotations
+    showAnnotations,
     activeAnnotationTool,
     isDrawing,
     currentDrawingPoints,
@@ -65,10 +71,9 @@ export function DicomCanvas() {
     cropBounds,
     setCropBounds,
     setCanvasExporter,
-    // AI related state
     aiAnnotations,
     isAiLoading,
-    updateAnnotation, // Make sure this is destructured if used by draggable text
+    updateAnnotation,
   } = useToolStore();
 
   const [image, setImage] = useState<HTMLImageElement | null>(null);
@@ -109,7 +114,7 @@ export function DicomCanvas() {
     image,
     dimensions,
     annotations,
-    aiAnnotations, // Added aiAnnotations
+    aiAnnotations,
     imageFilters,
     imageTransformations,
     dicomData,
@@ -264,7 +269,7 @@ export function DicomCanvas() {
   const handleWheel = (e: Konva.KonvaEventObject<WheelEvent>) => {
     e.evt.preventDefault();
     const stage = stageRef.current;
-    if (!stage || (fit.scale || 1) === 0) return; // fit.scale can be 0 initially
+    if (!stage || (fit.scale || 1) === 0) return;
     const oldTotalStageScale = stage.scaleX();
     const pointer = stage.getPointerPosition();
     if (!pointer) return;
@@ -345,14 +350,13 @@ export function DicomCanvas() {
     resetZoom();
     setToolUIVisibility("showCropInterface", false);
     setCropBounds(null);
-    useToolStore.getState().clearAllAnnotations(); // Clear user annotations
+    useToolStore.getState().clearAllAnnotations();
   };
 
   const handleCropDragStart = () => setIsDraggingCrop(true);
   const handleCropDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
     setIsDraggingCrop(false);
     if (cropBounds && image) {
-      // image must exist here
       const newX = Math.max(0, e.target.x());
       const newY = Math.max(0, e.target.y());
       const clampedX = Math.min(newX, image.width - cropBounds.width);
@@ -378,7 +382,6 @@ export function DicomCanvas() {
   const isLoadingDicom = useDicomStore((state) => state.isLoading);
 
   if (isLoadingDicom || (dicomData && !image)) {
-    /* Loading DICOM state */
     return (
       <div
         ref={containerRef}
@@ -392,7 +395,6 @@ export function DicomCanvas() {
     );
   }
   if (!dimensions) {
-    /* Initializing canvas state */
     return (
       <div
         ref={containerRef}
@@ -403,7 +405,6 @@ export function DicomCanvas() {
     );
   }
   if (!image) {
-    /* No image loaded state */
     return (
       <div
         ref={containerRef}
@@ -418,7 +419,7 @@ export function DicomCanvas() {
     );
   }
 
-  const { scale: fitScaleVal, offsetX, offsetY } = fit; // fitScaleVal to avoid conflict
+  const { scale: fitScaleVal, offsetX, offsetY } = fit;
   const {
     scale: userScale,
     position: userPosition,
@@ -426,8 +427,8 @@ export function DicomCanvas() {
     flipX,
     flipY,
   } = imageTransformations;
-  const totalStageScale = userScale * (fitScaleVal || 1); // Ensure fitScaleVal is not 0
-  const itemScale = 1 / totalStageScale; // Inverse scale for annotations etc.
+  const totalStageScale = userScale * (fitScaleVal || 1);
+  const itemScale = 1 / totalStageScale;
 
   const getCursor = () => {
     if (isDraggingCrop) return "move";
@@ -448,7 +449,6 @@ export function DicomCanvas() {
   };
 
   const TextConfigPanel = () => (
-    /* ... Same as your existing ... */
     <div className="absolute top-4 right-4 bg-gray-800 p-4 rounded-lg shadow-lg z-20 text-white">
       <h3 className="mb-2 font-semibold">Text Settings</h3>
       <div className="space-y-2">
@@ -485,7 +485,6 @@ export function DicomCanvas() {
     </div>
   );
   const ZoomPanel = () => (
-    /* ... Same as your existing ... */
     <div className="absolute top-4 left-4 bg-gray-800 p-4 rounded-lg shadow-lg z-20 min-w-[200px] text-white">
       <h3 className="mb-3 font-semibold">Zoom Controls</h3>
       <div className="space-y-3">
@@ -527,7 +526,6 @@ export function DicomCanvas() {
     </div>
   );
   const BrightnessContrastPanel = () => (
-    /* ... Same as your existing ... */
     <div className="absolute top-4 left-4 bg-gray-800 p-4 rounded-lg shadow-lg z-20 min-w-[200px] text-white">
       <h3 className="mb-3 font-semibold">Brightness & Contrast</h3>
       <div className="space-y-4">
@@ -584,7 +582,6 @@ export function DicomCanvas() {
     </div>
   );
   const CropControlPanel = () => (
-    /* ... Same as your existing ... */
     <div className="absolute top-4 right-4 bg-gray-800 p-4 rounded-lg shadow-lg z-20 text-white min-w-[220px]">
       <h3 className="mb-3 font-semibold">Crop Controls</h3>
       <div className="space-y-3">
@@ -635,7 +632,7 @@ export function DicomCanvas() {
     </div>
   );
 
-  let classificationTextYOffset = 10; // Initial offset for stacking classification texts
+  let classificationTextYOffset = 10;
 
   return (
     <div
@@ -675,7 +672,6 @@ export function DicomCanvas() {
             });
         }}
       >
-        {/* Base DICOM Image Layer */}
         <Layer>
           <KonvaImage
             ref={imageNodeRef}
@@ -696,12 +692,11 @@ export function DicomCanvas() {
           />
         </Layer>
 
-        {/* AI Annotations Layer - Positioned below user annotations */}
         <Layer name="ai-annotations-layer">
-          {/* AI Detections (Bounding Boxes) */}
           {aiAnnotations.detections
-            .filter((det) => det.visible)
-            .map((det) => {
+            .filter((det: BoundingBox) => det.visible) // MODIFIED
+            .map((det: BoundingBox) => {
+              // MODIFIED
               const boxColor =
                 AI_COLORS[det.label] || AI_COLORS.detection_default;
               return (
@@ -733,10 +728,10 @@ export function DicomCanvas() {
                 </Group>
               );
             })}
-          {/* AI Segmentations (Contours) */}
           {aiAnnotations.segmentations
-            .filter((seg) => seg.visible)
-            .map((seg) => {
+            .filter((seg: SegmentationContour) => seg.visible) // MODIFIED
+            .map((seg: SegmentationContour) => {
+              // MODIFIED
               const segColor =
                 AI_COLORS[seg.label || "segmentation_default"] ||
                 AI_COLORS.segmentation_default;
@@ -754,12 +749,9 @@ export function DicomCanvas() {
             })}
         </Layer>
 
-        {/* User Annotations Layer */}
         {showAnnotations && (
           <Layer name="user-annotations-layer">
-            {/* Your existing user annotation rendering logic */}
             {annotations.map((ann) => {
-              // const itemScale is already defined above
               if (
                 (ann.type === "freehand" ||
                   ann.type === "highlight" ||
@@ -804,7 +796,7 @@ export function DicomCanvas() {
                                 ann.points[ann.points.length - 1]) /
                                 2 -
                               10 * itemScale
-                            } // Offset text slightly above line
+                            }
                             text={ann.text}
                             fontSize={12 * itemScale}
                             fill={ann.color}
@@ -827,7 +819,6 @@ export function DicomCanvas() {
                     fill={ann.color || "#00FF00"}
                     draggable
                     onDragEnd={(e) => {
-                      // Ensure updateAnnotation is available from useToolStore
                       if (updateAnnotation) {
                         updateAnnotation(ann.id, {
                           position: { x: e.target.x(), y: e.target.y() },
@@ -839,7 +830,6 @@ export function DicomCanvas() {
               }
               return null;
             })}
-            {/* Current drawing preview */}
             {isDrawing &&
               currentDrawingPoints.length >= 2 &&
               activeAnnotationTool &&
@@ -899,10 +889,8 @@ export function DicomCanvas() {
           </Layer>
         )}
 
-        {/* Crop Interface Layer */}
         {toolUIState.showCropInterface && image && cropBounds && (
           <Layer name="crop-interface-layer">
-            {/* Your existing crop interface rendering logic with itemScale */}
             <KonvaRect
               x={cropBounds.x}
               y={cropBounds.y}
@@ -968,7 +956,6 @@ export function DicomCanvas() {
                 }}
                 onDragStart={handleCropDragStart}
                 onDragMove={(e) => {
-                  // Your existing complex crop handle drag move logic
                   const newPointerX = e.target.x();
                   const newPointerY = e.target.y();
                   if (!cropBounds || !image) return;
@@ -1072,18 +1059,18 @@ export function DicomCanvas() {
           </Layer>
         )}
 
-        {/* AI Classification Text Overlay Layer */}
         <Layer name="classification-overlay-layer">
           {aiAnnotations.classifications
-            .filter((cls) => cls.visible)
-            .map((cls) => {
+            .filter((cls: ClassificationPrediction) => cls.visible) // MODIFIED
+            .map((cls: ClassificationPrediction) => {
+              // MODIFIED
               const clsColor =
                 AI_COLORS[cls.label] || AI_COLORS.classification_default;
               const textNode = (
                 <Text
                   key={cls.id}
                   x={10 * itemScale}
-                  y={classificationTextYOffset * itemScale} // Use itemScale for positioning too
+                  y={classificationTextYOffset * itemScale}
                   text={`${cls.label}${cls.confidence ? ": " + cls.confidence.toFixed(2) : ""}`}
                   fontSize={12 * itemScale}
                   fill={clsColor}
@@ -1092,20 +1079,18 @@ export function DicomCanvas() {
                   listening={false}
                 />
               );
-              classificationTextYOffset += 18; // This offset is in "scaled" pixels for stacking, actual position uses itemScale.
+              classificationTextYOffset += 18;
               return textNode;
             })}
         </Layer>
       </Stage>
 
-      {/* UI Panels */}
       {activeAnnotationTool === "text" && <TextConfigPanel />}
       {toolUIState.showZoomPanel && <ZoomPanel />}
       {toolUIState.showBrightnessContrastPanel &&
         !toolUIState.showZoomPanel && <BrightnessContrastPanel />}
       {toolUIState.showCropInterface && <CropControlPanel />}
 
-      {/* AI Loading Indicator */}
       {(isAiLoading.detection ||
         isAiLoading.segmentation ||
         isAiLoading.classification) && (
