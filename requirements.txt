@@ -8,7 +8,7 @@ python-multipart
 pydicom
 numpy
 Pillow
-opencv-python-headless 
-tensorflow 
+# opencv-python-headless 
+# tensorflow 
 ultralytics
-huggingface_hub
+# huggingface_hub
