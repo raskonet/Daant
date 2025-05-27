@@ -1,7 +1,7 @@
 import React from "react";
 import { ImageToolsBar } from "./ImageToolsBar";
 import { AiViewerControls } from "./AiViewerControls";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { TooltipProvider } from "../../components/ui/tooltip";
 
 export function RightPanel() {
   return (

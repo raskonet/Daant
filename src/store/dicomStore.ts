@@ -1,6 +1,6 @@
 import { create } from "zustand";
-import { DicomData, DicomMeta, ImagePayload } from "@/types";
-import { fetchDicomImagePayload, uploadDicom } from "@/services/api";
+import { DicomData, DicomMeta, ImagePayload } from "../../types";
+import { fetchDicomImagePayload, uploadDicom } from "../services/api";
 
 function parseDicomDate(dicomDateStr: string | null | undefined): Date | null {
   if (!dicomDateStr || dicomDateStr.length !== 8) {

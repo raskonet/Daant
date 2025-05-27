@@ -1,9 +1,9 @@
 "use client";
 import React, { useCallback } from "react";
 import { useDropzone } from "react-dropzone";
-import { Icons } from "@/components/ui/icons";
-import { useDicomStore } from "@/store/dicomStore";
-import { Button } from "@/components/ui/button";
+import { Icons } from "../../components/ui/icons";
+import { useDicomStore } from "../../store/dicomStore";
+import { Button } from "../../components/ui/button";
 
 export function UploadDicom() {
   const { uploadDicomFile, isLoading, error } = useDicomStore();

@@ -1,7 +1,7 @@
 "use client";
-import { CanvasContainer } from "@/components/viewer/CanvasContainer";
-import { UploadDicom } from "@/components/viewer/UploadDicom";
-import { useDicomStore } from "@/store/dicomStore";
+import { CanvasContainer } from "../../components/viewer/CanvasContainer";
+import { UploadDicom } from "../../components/viewer/UploadDicom";
+import { useDicomStore } from "../../store/dicomStore";
 import { useEffect } from "react";
 
 export default function ViewerPage() {

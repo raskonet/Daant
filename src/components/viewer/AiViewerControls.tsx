@@ -1,13 +1,13 @@
 // frontend/src/components/viewer/AiViewerControls.tsx
 "use client";
 import React, { useState } from "react";
-import { Icons } from "@/components/ui/icons";
+import { Icons } from "../../components/ui/icons";
 // Button component is not used in this version for feedback, can be added back if needed
 // import { Button } from "@/components/ui/button";
-import { Toggle } from "@/components/ui/toggle";
-import { Checkbox } from "@/components/ui/checkbox";
-import { useToolStore } from "@/store/toolStore";
-import { AiStoreAnnotations } from "@/types/ai"; // Ensure this path is correct
+import { Toggle } from "../../components/ui/toggle";
+import { Checkbox } from "../../components/ui/checkbox";
+import { useToolStore } from "../../store/toolStore";
+import { AiStoreAnnotations } from "../../types/ai"; // Ensure this path is correct
 
 interface FindingItemProps {
   label: string;

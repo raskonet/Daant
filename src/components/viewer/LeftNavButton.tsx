@@ -1,6 +1,6 @@
 import React from "react";
-import { Icons } from "@/components/ui/icons";
-import { Button } from "@/components/ui/button";
+import { Icons } from "../../components/ui/icons";
+import { Button } from "../../components/ui/button";
 
 export function LeftNavButton() {
   return (

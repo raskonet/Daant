@@ -1,11 +1,11 @@
 // frontend/src/components/viewer/Header.tsx
 "use client";
 import React, { useState } from "react";
-import { Icons } from "@/components/ui/icons";
-import { Button } from "@/components/ui/button";
-import { Toggle } from "@/components/ui/toggle";
-import { useDicomStore } from "@/store/dicomStore";
-import { useToolStore } from "@/store/toolStore";
+import { Icons } from "../../components/ui/icons";
+import { Button } from "../../components/ui/button";
+import { Toggle } from "../../components/ui/toggle";
+import { useDicomStore } from "../../store/dicomStore";
+import { useToolStore } from "../../store/toolStore";
 // import { shallow } from 'zustand/shallow'; // Only needed if using the shallow comparison alternative
 
 export function Header() {

@@ -1,14 +1,14 @@
 // frontend/src/components/viewer/ImageToolsBar.tsx
 "use client";
 import React from "react";
-import { Icons } from "@/components/ui/icons";
-import { Button } from "@/components/ui/button";
+import { Icons } from "../../components/ui/icons";
+import { Button } from "../../components/ui/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { useToolStore, ActiveAnnotationTool } from "@/store/toolStore";
+} from "../../components/ui/tooltip";
+import { useToolStore, ActiveAnnotationTool } from "../../store/toolStore";
 
 interface ToolConfig {
   id: string;

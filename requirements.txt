@@ -1,4 +1,14 @@
 fastapi==0.104.1
 mangum==0.17.0
-uvicorn==0.24.0
 python-multipart==0.0.6
+uvicorn[standard] 
+pydantic
+pydantic-settings
+python-multipart
+pydicom
+numpy
+Pillow
+opencv-python-headless 
+tensorflow 
+ultralytics
+huggingface_hub

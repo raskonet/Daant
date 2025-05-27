@@ -2,10 +2,10 @@
 "use client";
 
 import React from "react";
-import { Header } from "@/components/viewer/Header";
-import { LeftNavButton } from "@/components/viewer/LeftNavButton";
-import { RightPanel } from "@/components/viewer/RightPanel";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { Header } from "../../components/viewer/Header";
+import { LeftNavButton } from "../../components/viewer/LeftNavButton";
+import { RightPanel } from "../../components/viewer/RightPanel";
+import { TooltipProvider } from "../../components/ui/tooltip";
 
 export default function ViewerLayout({
   children,
