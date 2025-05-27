@@ -8,7 +8,7 @@ pydantic-settings
 pydicom
 numpy
 Pillow
-# opencv-python-headless 
+ opencv-python-headless 
 # tensorflow 
 # ultralytics
 # huggingface_hub
