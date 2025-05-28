@@ -1,8 +1,16 @@
 {
-  "rewrites": [
+  "functions": {
+    "api/index.py": {
+      "runtime": "python3.11"
+    }
+  },
+  "builds": [
     {
-      "source": "/api/v1/(.*)",
-      "destination": "/api/index"
+      "src": "api/index.py",
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "250mb"
+      }
     }
   ]
 }
