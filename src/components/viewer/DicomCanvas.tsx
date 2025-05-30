@@ -1,6 +1,12 @@
 // src/components/viewer/DicomCanvas.tsx
 "use client";
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  useMemo,
+} from "react";
 import {
   Stage,
   Layer,
@@ -14,25 +20,27 @@ import {
   Tag,
 } from "react-konva";
 import Konva from "konva";
+import { useShallow } from "zustand/react/shallow";
 import { useDicomStore } from "../../store/dicomStore";
-
 import {
   useToolStore,
   mapBrightnessToKonva,
   mapContrastToKonva,
-  initialImageFilters as defaultImageFilters,
+  CropBounds,
+  Annotation,
 } from "../../store/toolStore";
-
 import { Icons } from "../../components/ui/icons";
-
+// import { Button } from "../../components/ui/button"; // Not used in this file directly
 import {
   BoundingBox,
   SegmentationContour,
   ClassificationPrediction,
 } from "../../types/ai";
-// import { BoundingBox, ... } from "@/types/ai"; // If your alias is working
+import { FreehandOptionsPanel } from "./FreehandOptionsPanel";
+import { TextAnnotationOptionsPanel } from "./TextAnnotationOptionsPanel";
+import { ZoomControlPanel } from "./ZoomControlPanel";
+import { BrightnessContrastPanel } from "./BrightnessContrastPanel";
 
-// Define AI annotation colors (can be moved to a theme/config file)
 const AI_COLORS: Record<string, string> = {
   detection_default: "rgba(239, 68, 68, 0.9)",
   Caries: "rgba(249, 115, 22, 0.9)",
@@ -43,17 +51,25 @@ const AI_COLORS: Record<string, string> = {
   Calculus: "rgba(139, 92, 246, 0.9)",
 };
 
+let dicomCanvasRenderCount = 0;
+
 export function DicomCanvas() {
+  dicomCanvasRenderCount++;
+  // console.log(
+  //   `%cDicomCanvas RENDER #${dicomCanvasRenderCount}`,
+  //   "color: orange; font-weight: bold;",
+  // );
+
   const dicomData = useDicomStore((state) => state.dicomData);
-  const updateCurrentDicomData = useDicomStore(
-    (state) => state.updateCurrentDicomData,
-  );
+  // console.log("DicomCanvas: dicomData from store:", dicomData);
 
   const {
     imageFilters,
     setImageFilter,
     imageTransformations,
     setImageTransformation,
+    setSourceCrop,
+    resetCrop,
     annotations,
     showAnnotations,
     activeAnnotationTool,
@@ -68,320 +84,755 @@ export function DicomCanvas() {
     resetZoom,
     toolUIState,
     setToolUIVisibility,
-    cropBounds,
-    setCropBounds,
     setCanvasExporter,
+    setOriginalDicomDownloader,
     aiAnnotations,
     isAiLoading,
     updateAnnotation,
-  } = useToolStore();
+    freehandColor,
+    freehandStrokeWidth,
+    addAnnotation,
+  } = useToolStore(
+    useShallow((state) => {
+      // console.log(
+      //   "%cDicomCanvas: useToolStore SELECTOR RUNNING",
+      //   "color: blue;",
+      // );
+      return {
+        imageFilters: state.imageFilters,
+        setImageFilter: state.setImageFilter,
+        imageTransformations: state.imageTransformations,
+        setImageTransformation: state.setImageTransformation,
+        setSourceCrop: state.setSourceCrop,
+        resetCrop: state.resetCrop,
+        annotations: state.annotations,
+        showAnnotations: state.showAnnotations,
+        activeAnnotationTool: state.activeAnnotationTool,
+        isDrawing: state.isDrawing,
+        currentDrawingPoints: state.currentDrawingPoints,
+        resetAllToolRelatedState: state.resetAllToolRelatedState,
+        startCurrentDrawing: state.startCurrentDrawing,
+        finishCurrentTextAnnotation: state.finishCurrentTextAnnotation,
+        addPointToCurrentDrawing: state.addPointToCurrentDrawing,
+        finishCurrentPathAnnotation: state.finishCurrentPathAnnotation,
+        setStageZoomAndPosition: state.setStageZoomAndPosition,
+        resetZoom: state.resetZoom,
+        toolUIState: state.toolUIState,
+        setToolUIVisibility: state.setToolUIVisibility,
+        setCanvasExporter: state.setCanvasExporter,
+        setOriginalDicomDownloader: state.setOriginalDicomDownloader,
+        aiAnnotations: state.aiAnnotations,
+        isAiLoading: state.isAiLoading,
+        updateAnnotation: state.updateAnnotation,
+        freehandColor: state.freehandColor,
+        freehandStrokeWidth: state.freehandStrokeWidth,
+        addAnnotation: state.addAnnotation,
+      };
+    }),
+  );
+  // console.log("DicomCanvas: toolStore values:", {
+  //   activeAnnotationTool,
+  //   isDrawing,
+  //   toolUIState,
+  // });
 
   const [image, setImage] = useState<HTMLImageElement | null>(null);
+  const [originalFileBlob, setOriginalFileBlob] = useState<Blob | null>(null);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const imageNodeRef = useRef<Konva.Image>(null);
+  const imageGroupRef = useRef<Konva.Group>(null);
 
   const [dimensions, setDimensions] = useState<{
     width: number;
     height: number;
   } | null>(null);
   const [fit, setFit] = useState({ scale: 1, offsetX: 0, offsetY: 0 });
-  const [isDraggingCrop, setIsDraggingCrop] = useState(false);
-  const [textConfig, setTextConfig] = useState({
-    fontSize: 16,
-    color: "#00FF00",
-  });
+
+  const [cropUIRect_Display, setCropUIRect_Display] =
+    useState<CropBounds | null>(null);
+  const [isDrawingCropRect, setIsDrawingCropRect] = useState(false);
+  const [cropStartPoint_Display, setCropStartPoint_Display] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+
+  // Text config not used directly for annotations, store handles defaults
+  // const [textConfig, setTextConfig] = useState({
+  //   fontSize: 16,
+  //   color: "#00FF00",
+  // });
+
+  const dicomId = dicomData?.id;
+  const prevDicomIdRef = useRef(dicomId);
 
   useEffect(() => {
-    resetAllToolRelatedState();
-  }, [dicomData, resetAllToolRelatedState]);
-
-  useEffect(() => {
-    const exporter = () => {
-      if (stageRef.current && image) {
-        return stageRef.current.toDataURL({
-          mimeType: "image/png",
-          quality: 1,
-          pixelRatio: 2,
-        });
+    const currentDicomIdInEffect = dicomData?.id;
+    // console.log(
+    //   `%cDicomCanvas: resetAllToolRelatedState EFFECT. PrevID: ${prevDicomIdRef.current}, CurrID: ${currentDicomIdInEffect}`,
+    //   "color: green;",
+    // );
+    if (prevDicomIdRef.current !== currentDicomIdInEffect) {
+      if (currentDicomIdInEffect) {
+        // console.log(
+        //   "DicomCanvas: New DICOM detected, resetting tool state. ID:",
+        //   currentDicomIdInEffect,
+        // );
+        resetAllToolRelatedState();
+      } else if (prevDicomIdRef.current) {
+        // console.log("DicomCanvas: DICOM unloaded, resetting tool state.");
+        resetAllToolRelatedState();
       }
-      return undefined;
-    };
-    setCanvasExporter(exporter);
-    return () => setCanvasExporter(null);
-  }, [
-    setCanvasExporter,
-    image,
-    dimensions,
-    annotations,
-    aiAnnotations,
-    imageFilters,
-    imageTransformations,
-    dicomData,
-  ]);
+      // console.log("DicomCanvas: Resetting local crop UI state in reset effect");
+      setCropUIRect_Display(null);
+      setIsDrawingCropRect(false);
+      setCropStartPoint_Display(null);
+    }
+    prevDicomIdRef.current = currentDicomIdInEffect;
+  }, [dicomData?.id, resetAllToolRelatedState]);
 
   useEffect(() => {
+    // console.log(
+    //   `%cDicomCanvas: HTMLImageElement loading EFFECT. DicomID: ${dicomData?.id}, pngDataUrl exists: ${!!dicomData?.pngDataUrl}`,
+    //   "color: green;",
+    // );
     if (!dicomData?.pngDataUrl) {
+      // console.log(
+      //   "DicomCanvas: No pngDataUrl, setting image to null in effect.",
+      // );
       setImage(null);
+      setOriginalFileBlob(null);
       return;
     }
     const img = new window.Image();
     img.src = dicomData.pngDataUrl;
-    img.onload = () => setImage(img);
+    img.onload = () => {
+      // console.log(
+      //   "DicomCanvas: HTMLImageElement LOADED, setting image state.",
+      //   img.width,
+      //   img.height,
+      // );
+      setImage(img);
+    };
     img.onerror = () => {
-      console.error("Failed to load DICOM image from data URL");
+      console.error(
+        "DicomCanvas: Failed to load HTMLImageElement from data URL",
+      );
       setImage(null);
     };
-  }, [dicomData?.pngDataUrl]);
+    const fetchOriginal = async () => {
+      if (dicomData.id) {
+        // console.log(
+        //   "DicomCanvas: Fetching original DICOM blob for ID:",
+        //   dicomData.id,
+        // );
+        try {
+          const response = await fetch(
+            `/api/v1/dicom/${dicomData.id}/download_original`,
+          );
+          if (response.ok) {
+            const blob = await response.blob();
+            // console.log(
+            //   "DicomCanvas: Original DICOM blob fetched, setting state.",
+            // );
+            setOriginalFileBlob(blob);
+          } else {
+            console.warn(
+              "DicomCanvas: Could not fetch original DICOM blob for download. Status:",
+              response.status,
+            );
+            setOriginalFileBlob(null);
+          }
+        } catch (e) {
+          console.error("DicomCanvas: Error fetching original DICOM blob:", e);
+          setOriginalFileBlob(null);
+        }
+      }
+    };
+    fetchOriginal();
+  }, [dicomData?.pngDataUrl, dicomData?.id]);
 
   useEffect(() => {
+    // console.log(
+    //   `%cDicomCanvas: Original DICOM Downloader EFFECT. originalFileBlob exists: ${!!originalFileBlob}`,
+    //   "color: green;",
+    // );
+    if (originalFileBlob) {
+      const downloader = () => originalFileBlob;
+      setOriginalDicomDownloader(downloader);
+    } else {
+      setOriginalDicomDownloader(null);
+    }
+
+    return () => {
+      // console.log(
+      //   "DicomCanvas: Cleaning up Original DICOM Downloader effect (DicomCanvas unmounting or blob becoming null)",
+      // );
+      setOriginalDicomDownloader(null);
+    };
+  }, [originalFileBlob, setOriginalDicomDownloader]);
+
+  useEffect(() => {
+    // console.log(
+    //   `%cDicomCanvas: Canvas Exporter EFFECT. Image loaded: ${!!image}`,
+    //   "color: green;",
+    // );
+    if (image) {
+      const exporter = () => {
+        const groupToExport = imageGroupRef.current;
+        if (groupToExport) {
+          // console.log("DicomCanvas: Exporting imageGroupRef toDataURL");
+          return groupToExport.toDataURL({
+            mimeType: "image/png",
+            quality: 1,
+            pixelRatio: 2,
+          });
+        } else if (stageRef.current) {
+          // console.log("DicomCanvas: Exporting stageRef toDataURL");
+          return stageRef.current.toDataURL({
+            mimeType: "image/png",
+            quality: 1,
+            pixelRatio: 2,
+          });
+        }
+        console.warn(
+          "DicomCanvas: Exporter called but no valid target (group/stage) or image.",
+        );
+        return undefined;
+      };
+      setCanvasExporter(exporter);
+    } else {
+      setCanvasExporter(null);
+    }
+
+    return () => {
+      // console.log(
+      //   "DicomCanvas: Cleaning up Canvas Exporter effect (DicomCanvas unmounting or image becoming null)",
+      // );
+      setCanvasExporter(null);
+    };
+  }, [image, setCanvasExporter]);
+
+  useEffect(() => {
+    // console.log(
+    //   `%cDicomCanvas: ResizeObserver EFFECT. Container ref: ${!!containerRef.current}`,
+    //   "color: green;",
+    // );
     const el = containerRef.current;
     if (!el) return;
-    const updateDim = () =>
-      setDimensions({ width: el.offsetWidth, height: el.offsetHeight });
-    updateDim();
+    const updateDim = () => {
+      // console.log(
+      //   "DicomCanvas: ResizeObserver - updateDim called. OffsetWidth:",
+      //   el.offsetWidth, "OffsetHeight:", el.offsetHeight
+      // );
+      // Only set dimensions if they are valid (both > 0)
+      if (el.offsetWidth > 0 && el.offsetHeight > 0) {
+        setDimensions({ width: el.offsetWidth, height: el.offsetHeight });
+      } else if (
+        el.offsetWidth > 0 &&
+        dimensions?.height &&
+        dimensions.height <= 0
+      ) {
+        // If width is fine but height is still 0, keep old width if it was valid but set height
+        // This can happen during layout shifts
+        setDimensions((prev) => ({
+          width: el.offsetWidth,
+          height: prev?.height || 0,
+        }));
+      } else {
+        // console.log("DicomCanvas: ResizeObserver - received zero or invalid dimensions from offset, not updating state yet.");
+      }
+    };
+    updateDim(); // Initial call
     const obs = new ResizeObserver(updateDim);
     obs.observe(el);
-    return () => obs.disconnect();
-  }, []);
+    return () => {
+      // console.log("DicomCanvas: Cleaning up ResizeObserver effect");
+      obs.disconnect();
+    };
+  }, []); // dimensions dependency removed to avoid loop if initial height is 0
+
+  const currentImageDisplay = useMemo(() => {
+    // console.log(
+    //   `%cDicomCanvas: currentImageDisplay useMemo. Image: ${!!image}, SourceCrop:`,
+    //   imageTransformations.sourceCrop,
+    //   "color: purple;",
+    // );
+    if (!image) {
+      // console.log("DicomCanvas: currentImageDisplay returning NULL (no image)");
+      return null;
+    }
+    if (imageTransformations.sourceCrop) {
+      if (
+        imageTransformations.sourceCrop.width <= 0 ||
+        imageTransformations.sourceCrop.height <= 0
+      ) {
+        // console.warn(
+        //   "DicomCanvas: currentImageDisplay - sourceCrop has zero width/height, using full image dims",
+        // );
+        return {
+          cropToApply: undefined,
+          konvaImageWidth: image.width,
+          konvaImageHeight: image.height,
+        };
+      }
+      return {
+        cropToApply: imageTransformations.sourceCrop,
+        konvaImageWidth: imageTransformations.sourceCrop.width,
+        konvaImageHeight: imageTransformations.sourceCrop.height,
+      };
+    }
+    if (image.width <= 0 || image.height <= 0) {
+      // console.warn(
+      //   "DicomCanvas: currentImageDisplay - HTMLImageElement has zero/invalid width/height, returning null",
+      // );
+      return null;
+    }
+    return {
+      cropToApply: undefined,
+      konvaImageWidth: image.width,
+      konvaImageHeight: image.height,
+    };
+  }, [image, imageTransformations.sourceCrop]);
+  // console.log(
+  //   "DicomCanvas: Value of currentImageDisplay after useMemo:",
+  //   currentImageDisplay,
+  // );
 
   useEffect(() => {
-    if (!image || !dimensions) {
-      setFit({ scale: 1, offsetX: 0, offsetY: 0 });
+    // console.log(
+    //   `%cDicomCanvas: Fit Calculation EFFECT. Dims: ${!!dimensions}, currentImageDisplay: ${!!currentImageDisplay}, Fit values:`,
+    //   fit,
+    //   "color: green;",
+    // );
+    const prevFitRef = { ...fit };
+
+    if (
+      !dimensions ||
+      dimensions.width <= 0 ||
+      dimensions.height <= 0 ||
+      !currentImageDisplay
+    ) {
+      if (fit.scale !== 1 || fit.offsetX !== 0 || fit.offsetY !== 0) {
+        // console.log(
+        //   "DicomCanvas: Fit - Resetting fit state to default due to missing/invalid dims/display",
+        // );
+        setFit({ scale: 1, offsetX: 0, offsetY: 0 });
+      }
       return;
     }
     const PADDING = 0.98;
-    const scaleX = dimensions.width / image.width;
-    const scaleY = dimensions.height / image.height;
+    const { konvaImageWidth, konvaImageHeight } = currentImageDisplay;
+    if (konvaImageWidth <= 0 || konvaImageHeight <= 0) {
+      if (fit.scale !== 1 || fit.offsetX !== 0 || fit.offsetY !== 0) {
+        // console.log(
+        //   "DicomCanvas: Fit - Resetting fit state to default due to zero display dims",
+        // );
+        setFit({ scale: 1, offsetX: 0, offsetY: 0 });
+      }
+      return;
+    }
+    const scaleX = dimensions.width / konvaImageWidth;
+    const scaleY = dimensions.height / konvaImageHeight;
     const calculatedFitScale = Math.min(scaleX, scaleY) * PADDING;
-    const scaledWidth = image.width * calculatedFitScale;
-    const scaledHeight = image.height * calculatedFitScale;
-    setFit({
-      scale: calculatedFitScale,
-      offsetX: (dimensions.width - scaledWidth) / 2,
-      offsetY: (dimensions.height - scaledHeight) / 2,
-    });
-  }, [image, dimensions]);
+    const finalScaledWidth = konvaImageWidth * calculatedFitScale;
+    const finalScaledHeight = konvaImageHeight * calculatedFitScale;
+    const newFit = {
+      scale: calculatedFitScale > 0 ? calculatedFitScale : 1, // Ensure scale is positive
+      offsetX: (dimensions.width - finalScaledWidth) / 2,
+      offsetY: (dimensions.height - finalScaledHeight) / 2,
+    };
+    if (
+      fit.scale !== newFit.scale ||
+      fit.offsetX !== newFit.offsetX ||
+      fit.offsetY !== newFit.offsetY
+    ) {
+      // console.log(
+      //   "DicomCanvas: Fit - Updating fit state. Old fit:",
+      //   prevFitRef,
+      //   "New fit:",
+      //   newFit,
+      // );
+      setFit(newFit);
+    }
+  }, [dimensions, currentImageDisplay, fit.scale, fit.offsetX, fit.offsetY]);
 
   useEffect(() => {
-    if (toolUIState.showCropInterface && image && !cropBounds) {
-      setCropBounds({
-        x: image.width * 0.25,
-        y: image.height * 0.25,
-        width: image.width * 0.5,
-        height: image.height * 0.5,
-      });
-    }
-  }, [toolUIState.showCropInterface, image, cropBounds, setCropBounds]);
-
-  const getLocalPointer = useCallback(() => {
-    const stage = stageRef.current;
-    if (!stage) return null;
-    const pointer = stage.getPointerPosition();
-    if (!pointer) return null;
+    // console.log(
+    //   `%cDicomCanvas: Filter Caching EFFECT. Filters:`,
+    //   imageFilters,
+    //   `Image: ${!!image}, Display: ${!!currentImageDisplay}`,
+    //   "color: green;",
+    // );
     const imgNode = imageNodeRef.current;
-    if (!imgNode) return null;
-    const transform = imgNode.getAbsoluteTransform().copy().invert();
-    if (!transform) return null;
-    return transform.point(pointer);
-  }, []);
-
-  const calculateDistance = useCallback(
-    (points: number[]) => {
-      if (points.length < 4) return 0;
-      const [x1, y1, x2, y2] = [
-        points[0],
-        points[1],
-        points[points.length - 2],
-        points[points.length - 1],
-      ];
-      const dx = x2 - x1;
-      const dy = y2 - y1;
-      if (dicomData?.meta.pixel_spacing) {
-        const [spacingY, spacingX] = dicomData.meta.pixel_spacing;
-        return Math.sqrt(
-          Math.pow(dx * spacingX, 2) + Math.pow(dy * spacingY, 2),
-        );
+    if (
+      imgNode &&
+      image &&
+      image.complete &&
+      image.naturalWidth > 0 &&
+      currentImageDisplay
+    ) {
+      const { brightness, contrast, invert } = imageFilters;
+      const needsCache = invert || brightness !== 0 || contrast !== 0;
+      if (imgNode.width() > 0 && imgNode.height() > 0) {
+        if (needsCache) {
+          // console.log("DicomCanvas: Filter - Caching image node");
+          imgNode.cache();
+        } else {
+          // console.log("DicomCanvas: Filter - Clearing image node cache");
+          imgNode.clearCache();
+        }
+      } else if (!needsCache) {
+        // console.log(
+        //   "DicomCanvas: Filter - No cache needed, clearing if exists",
+        // );
+        imgNode.clearCache();
       }
-      return Math.sqrt(dx * dx + dy * dy);
-    },
-    [dicomData],
-  );
+      // imgNode.getLayer()?.batchDraw(); // KEEP COMMENTED
+    }
+  }, [imageFilters, image, currentImageDisplay]);
+
+  const getPointerRelativeToImageGroupContent = useCallback(() => {
+    const stage = stageRef.current;
+    const group = imageGroupRef.current;
+    if (!stage || !group) {
+      console.warn(
+        "getPointerRelativeToImageGroupContent: Stage or Group not ready",
+      );
+      return null;
+    }
+    const pointerOnStage = stage.getPointerPosition();
+    if (!pointerOnStage) {
+      // console.warn( // This can be noisy if mouse is outside stage
+      //   "getPointerRelativeToImageGroupContent: No pointer on stage",
+      // );
+      return null;
+    }
+    try {
+      const transform = group.getAbsoluteTransform().copy().invert();
+      if (!transform) {
+        console.warn(
+          "getPointerRelativeToImageGroupContent: Could not invert group transform",
+        );
+        return null;
+      }
+      return transform.point(pointerOnStage);
+    } catch (error) {
+      console.error(
+        "Error in getPointerRelativeToImageGroupContent (transform):",
+        error,
+      );
+      return null;
+    }
+  }, []); // stageRef and imageGroupRef are refs, don't need to be deps
 
   const handleMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
-    if (e.evt.button !== 0) return;
-    if (toolUIState.showCropInterface && e.target.name()?.startsWith("crop-"))
+    const stage = stageRef.current;
+    if (!stage || !imageGroupRef.current) {
+      console.warn("DicomCanvas: MouseDown - Stage or ImageGroup not ready.");
       return;
-    const pos = getLocalPointer();
-    if (!pos) return;
-    if (
-      activeAnnotationTool &&
-      ["freehand", "highlight", "measurement"].includes(activeAnnotationTool)
-    ) {
-      startCurrentDrawing(pos);
-    } else if (activeAnnotationTool === "text") {
-      const text = window.prompt("Enter text:", "Annotation");
-      if (text)
-        finishCurrentTextAnnotation(
-          text,
-          pos,
-          textConfig.color,
-          textConfig.fontSize,
-        );
-      e.evt.stopPropagation();
+    }
+    // console.log(
+    //   "DicomCanvas: handleMouseDown",
+    //   e.evt.button,
+    //   "ActiveTool:",
+    //   activeAnnotationTool,
+    //   "CropUI:",
+    //   toolUIState.showCropInterface,
+    // );
+    if (e.evt.button !== 0) return; // Only left click
+    const posInGroup = getPointerRelativeToImageGroupContent();
+    if (!posInGroup) {
+      // console.log("DicomCanvas: MouseDown - posInGroup is null");
+      return;
+    }
+    // console.log("DicomCanvas: MouseDown - posInGroup:", posInGroup);
+
+    if (toolUIState.showCropInterface && image && currentImageDisplay) {
+      // console.log("DicomCanvas: MouseDown - Starting crop rect drawing");
+      const startX = Math.max(
+        0,
+        Math.min(posInGroup.x, currentImageDisplay.konvaImageWidth),
+      );
+      const startY = Math.max(
+        0,
+        Math.min(posInGroup.y, currentImageDisplay.konvaImageHeight),
+      );
+      setCropStartPoint_Display({ x: startX, y: startY });
+      setCropUIRect_Display({ x: startX, y: startY, width: 0, height: 0 });
+      setIsDrawingCropRect(true);
+      e.evt.preventDefault();
+      return;
+    }
+    if (activeAnnotationTool) {
+      // console.log(
+      //   "DicomCanvas: MouseDown - Annotation tool active:",
+      //   activeAnnotationTool,
+      // );
+      if (
+        ["freehand", "highlight", "measurement"].includes(activeAnnotationTool)
+      ) {
+        startCurrentDrawing(posInGroup);
+      } else if (activeAnnotationTool === "text") {
+        const text = window.prompt("Enter text:", "Annotation");
+        if (text && text.trim() !== "") {
+          // Ensure text is not empty
+          finishCurrentTextAnnotation(text, posInGroup);
+        } else if (text === "") {
+          // User entered empty string
+          alert("Annotation text cannot be empty.");
+        }
+      }
+      e.evt.stopPropagation(); // Prevent stage drag when drawing
     }
   };
 
-  const handleMouseMove = () => {
-    if (!isDrawing || !activeAnnotationTool || isDraggingCrop) return;
-    const pos = getLocalPointer();
-    if (pos) addPointToCurrentDrawing(pos);
+  const handleMouseMove = (e: Konva.KonvaEventObject<MouseEvent>) => {
+    const stage = stageRef.current;
+    if (!stage || !imageGroupRef.current) {
+      // console.warn("DicomCanvas: MouseMove - Stage or ImageGroup not ready."); // Can be noisy
+      return;
+    }
+    const posInGroup = getPointerRelativeToImageGroupContent();
+    if (!posInGroup) return;
+
+    if (
+      toolUIState.showCropInterface &&
+      isDrawingCropRect &&
+      cropStartPoint_Display &&
+      image &&
+      currentImageDisplay
+    ) {
+      const currentX = Math.max(
+        0,
+        Math.min(posInGroup.x, currentImageDisplay.konvaImageWidth),
+      );
+      const currentY = Math.max(
+        0,
+        Math.min(posInGroup.y, currentImageDisplay.konvaImageHeight),
+      );
+      setCropUIRect_Display({
+        x: Math.min(cropStartPoint_Display.x, currentX),
+        y: Math.min(cropStartPoint_Display.y, currentY),
+        width: Math.abs(currentX - cropStartPoint_Display.x),
+        height: Math.abs(currentY - cropStartPoint_Display.y),
+      });
+      e.evt.preventDefault();
+      return;
+    }
+    if (isDrawing && activeAnnotationTool) {
+      addPointToCurrentDrawing(posInGroup);
+    }
   };
 
-  const handleMouseUp = () => {
-    if (!isDrawing || !activeAnnotationTool || isDraggingCrop) return;
-    if (activeAnnotationTool === "freehand")
-      finishCurrentPathAnnotation("freehand", "#FFFF00", 2);
-    else if (activeAnnotationTool === "highlight")
-      finishCurrentPathAnnotation("highlight", "rgba(255,255,0,0.3)", 20);
-    else if (activeAnnotationTool === "measurement") {
-      if (currentDrawingPoints.length >= 4) {
-        const [x0, y0] = [currentDrawingPoints[0], currentDrawingPoints[1]];
-        const x1 = currentDrawingPoints[currentDrawingPoints.length - 2];
-        const y1 = currentDrawingPoints[currentDrawingPoints.length - 1];
-        if (x0 !== x1 || y0 !== y1) {
-          const distance = calculateDistance(currentDrawingPoints);
+  const handleMouseUp = (e: Konva.KonvaEventObject<MouseEvent>) => {
+    const stage = stageRef.current;
+    if (!stage || !imageGroupRef.current) {
+      console.warn("DicomCanvas: MouseUp - Stage or ImageGroup not ready.");
+      return;
+    }
+    // console.log(
+    //   "DicomCanvas: handleMouseUp. isDrawingCropRect:",
+    //   isDrawingCropRect,
+    //   "isDrawingAnnotation:",
+    //   isDrawing,
+    //   "ActiveTool:",
+    //   activeAnnotationTool,
+    // );
+    if (
+      toolUIState.showCropInterface &&
+      isDrawingCropRect &&
+      cropUIRect_Display &&
+      image &&
+      currentImageDisplay
+    ) {
+      // console.log(
+      //   "DicomCanvas: MouseUp - Finishing crop rect drawing. UI Rect:",
+      //   cropUIRect_Display,
+      // );
+      setIsDrawingCropRect(false);
+      setCropStartPoint_Display(null);
+      if (cropUIRect_Display.width > 5 && cropUIRect_Display.height > 5) {
+        let newSourceX = cropUIRect_Display.x;
+        let newSourceY = cropUIRect_Display.y;
+        if (imageTransformations.sourceCrop) {
+          newSourceX += imageTransformations.sourceCrop.x;
+          newSourceY += imageTransformations.sourceCrop.y;
+        }
+        newSourceX = Math.max(
+          0,
+          Math.min(newSourceX, image.width - cropUIRect_Display.width),
+        );
+        newSourceY = Math.max(
+          0,
+          Math.min(newSourceY, image.height - cropUIRect_Display.height),
+        );
+        const newSourceWidth = Math.min(
+          cropUIRect_Display.width,
+          image.width - newSourceX,
+        );
+        const newSourceHeight = Math.min(
+          cropUIRect_Display.height,
+          image.height - newSourceY,
+        );
+
+        if (newSourceWidth > 5 && newSourceHeight > 5) {
+          const newSourceCropVal = {
+            x: Math.round(newSourceX),
+            y: Math.round(newSourceY),
+            width: Math.round(newSourceWidth),
+            height: Math.round(newSourceHeight),
+          };
+          // console.log(
+          //   "DicomCanvas: MouseUp - Setting sourceCrop:",
+          //   newSourceCropVal,
+          // );
+          setSourceCrop(newSourceCropVal);
+        } else {
+          // console.log(
+          //   "DicomCanvas: MouseUp - Crop rect too small after clamping, not setting sourceCrop.",
+          // );
+        }
+      } else {
+        // console.log(
+        //   "DicomCanvas: MouseUp - Crop UI rect too small, not setting sourceCrop.",
+        // );
+      }
+      setCropUIRect_Display(null); // Clear UI rect
+      e.evt.preventDefault();
+      return;
+    }
+
+    if (isDrawing && activeAnnotationTool) {
+      // console.log(
+      //   "DicomCanvas: MouseUp - Finishing annotation:",
+      //   activeAnnotationTool,
+      // );
+      if (
+        typeof finishCurrentPathAnnotation !== "function" &&
+        ["freehand", "highlight", "measurement"].includes(activeAnnotationTool)
+      ) {
+        console.error(
+          "CRITICAL: finishCurrentPathAnnotation is not a function for path-based tool. Check store/destructuring.",
+          finishCurrentPathAnnotation,
+        );
+        useToolStore.setState({ isDrawing: false, currentDrawingPoints: [] }); // Reset drawing state
+        return;
+      }
+
+      if (
+        activeAnnotationTool === "freehand" ||
+        activeAnnotationTool === "highlight"
+      ) {
+        finishCurrentPathAnnotation(activeAnnotationTool);
+      } else if (activeAnnotationTool === "measurement") {
+        if (currentDrawingPoints.length >= 4) {
+          const calculateDistanceLocal = (points: number[]): number => {
+            if (points.length < 4) return 0;
+            const [x1, y1, x2, y2] = [
+              points[0],
+              points[1],
+              points[points.length - 2],
+              points[points.length - 1],
+            ];
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            if (dicomData?.meta.pixel_spacing) {
+              const [spacingY, spacingX] = dicomData.meta.pixel_spacing; // DICOM typically [row, col] or [Y, X]
+              return Math.sqrt(
+                Math.pow(dx * spacingX, 2) + Math.pow(dy * spacingY, 2),
+              );
+            }
+            return Math.sqrt(dx * dx + dy * dy);
+          };
+
+          const distance = calculateDistanceLocal(currentDrawingPoints);
           const unit = dicomData?.meta.pixel_spacing ? "mm" : "px";
-          finishCurrentPathAnnotation(
-            "measurement",
-            "#00FF00",
-            2,
-            dicomData?.meta.pixel_spacing,
-            `${distance.toFixed(1)} ${unit}`,
-          );
-          return;
+          const textContent = `${distance.toFixed(1)} ${unit}`;
+
+          // Call the store's addAnnotation directly for measurements
+          // It handles the undo stack.
+          addAnnotation({
+            type: "measurement",
+            points: [...currentDrawingPoints],
+            color: "#00FF00", // Or use a store-defined color for measurements
+            strokeWidth: 2, // Or use a store-defined strokeWidth
+            text: textContent,
+            // textPosition is handled by the renderer based on points for measurements.
+          });
+          useToolStore.setState({ isDrawing: false, currentDrawingPoints: [] }); // Manually reset
+        } else {
+          // Not enough points for a measurement line, just reset drawing state
+          useToolStore.setState({ isDrawing: false, currentDrawingPoints: [] });
         }
       }
-      useToolStore.setState({ isDrawing: false, currentDrawingPoints: [] });
     }
   };
 
   const handleWheel = (e: Konva.KonvaEventObject<WheelEvent>) => {
     e.evt.preventDefault();
     const stage = stageRef.current;
-    if (!stage || (fit.scale || 1) === 0) return;
-    const oldTotalStageScale = stage.scaleX();
+    if (!stage) return;
+
+    const oldStageScale = stage.scaleX(); // Assuming uniform scaling
     const pointer = stage.getPointerPosition();
     if (!pointer) return;
+
     const scaleBy = 1.1;
-    const newTotalStageScale =
-      e.evt.deltaY > 0
-        ? oldTotalStageScale / scaleBy
-        : oldTotalStageScale * scaleBy;
-    const minUserScale = 0.1;
-    const maxUserScale = 10;
-    const effectiveFitScale = fit.scale || 1;
-    const clampedTotalStageScale = Math.max(
-      minUserScale * effectiveFitScale,
-      Math.min(newTotalStageScale, maxUserScale * effectiveFitScale),
+    let newStageScale =
+      e.evt.deltaY > 0 ? oldStageScale / scaleBy : oldStageScale * scaleBy;
+
+    // Incorporate base fit scale for min/max limits
+    const baseFitScale = fit.scale > 0 ? fit.scale : 1; // Ensure fit.scale is positive
+    const minTotalScale = baseFitScale * 0.1; // Min zoom relative to fit
+    const maxTotalScale = baseFitScale * 10.0; // Max zoom relative to fit (increased from 2.0)
+
+    newStageScale = Math.max(
+      minTotalScale,
+      Math.min(newStageScale, maxTotalScale),
     );
-    if (clampedTotalStageScale === oldTotalStageScale) return;
+
+    if (Math.abs(newStageScale - oldStageScale) < 0.0001) return; // Avoid tiny changes
+
     const mousePointTo = {
-      x: (pointer.x - stage.x()) / oldTotalStageScale,
-      y: (pointer.y - stage.y()) / oldTotalStageScale,
+      x: (pointer.x - stage.x()) / oldStageScale,
+      y: (pointer.y - stage.y()) / oldStageScale,
     };
+
     const newStagePos = {
-      x: pointer.x - mousePointTo.x * clampedTotalStageScale,
-      y: pointer.y - mousePointTo.y * clampedTotalStageScale,
+      x: pointer.x - mousePointTo.x * newStageScale,
+      y: pointer.y - mousePointTo.y * newStageScale,
     };
-    setStageZoomAndPosition(clampedTotalStageScale / effectiveFitScale, {
+
+    // User scale is relative to the base fit scale
+    const newUserScale = newStageScale / baseFitScale;
+    // User position is the delta from the fit offset
+    const newUserPosition = {
       x: newStagePos.x - fit.offsetX,
       y: newStagePos.y - fit.offsetY,
-    });
-  };
-
-  const handleApplyInAppCrop = () => {
-    if (
-      !image ||
-      !cropBounds ||
-      !imageNodeRef.current ||
-      !dicomData ||
-      !updateCurrentDicomData
-    ) {
-      console.error("Cannot apply crop: missing data.");
-      return;
-    }
-    const imageNode = imageNodeRef.current;
-    const originalTransform = {
-      rotation: imageNode.rotation(),
-      scaleX: imageNode.scaleX(),
-      scaleY: imageNode.scaleY(),
-      offsetX: imageNode.offsetX(),
-      offsetY: imageNode.offsetY(),
     };
-    imageNode.rotation(0);
-    imageNode.scaleX(1);
-    imageNode.scaleY(1);
-    imageNode.offsetX(0);
-    imageNode.offsetY(0);
-    imageNode.getLayer()?.batchDraw();
-    const croppedDataURL = imageNode.toDataURL({
-      x: cropBounds.x,
-      y: cropBounds.y,
-      width: cropBounds.width,
-      height: cropBounds.height,
-      pixelRatio: 1,
-    });
-    imageNode.rotation(originalTransform.rotation);
-    imageNode.scaleX(originalTransform.scaleX);
-    imageNode.scaleY(originalTransform.scaleY);
-    imageNode.offsetX(originalTransform.offsetX);
-    imageNode.offsetY(originalTransform.offsetY);
-    imageNode.getLayer()?.batchDraw();
-    const newMeta = {
-      ...dicomData.meta,
-      rows: Math.round(cropBounds.height),
-      columns: Math.round(cropBounds.width),
-    };
-    updateCurrentDicomData({
-      pngDataUrl: croppedDataURL,
-      meta: newMeta as typeof dicomData.meta,
-    });
-    resetZoom();
-    setToolUIVisibility("showCropInterface", false);
-    setCropBounds(null);
-    useToolStore.getState().clearAllAnnotations();
-  };
 
-  const handleCropDragStart = () => setIsDraggingCrop(true);
-  const handleCropDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
-    setIsDraggingCrop(false);
-    if (cropBounds && image) {
-      const newX = Math.max(0, e.target.x());
-      const newY = Math.max(0, e.target.y());
-      const clampedX = Math.min(newX, image.width - cropBounds.width);
-      const clampedY = Math.min(newY, image.height - cropBounds.height);
-      setCropBounds({ ...cropBounds, x: clampedX, y: clampedY });
-    }
+    setStageZoomAndPosition(newUserScale, newUserPosition);
   };
-
-  useEffect(() => {
-    const imageNode = imageNodeRef.current;
-    if (imageNode && image) {
-      const isBrightnessAltered =
-        imageFilters.brightness !== defaultImageFilters.brightness;
-      const isContrastAltered =
-        imageFilters.contrast !== defaultImageFilters.contrast;
-      if (imageFilters.invert || isBrightnessAltered || isContrastAltered)
-        imageNode.cache();
-      else imageNode.clearCache();
-      imageNode.getLayer()?.batchDraw();
-    }
-  }, [imageFilters, image]);
 
   const isLoadingDicom = useDicomStore((state) => state.isLoading);
+  // console.log(
+  //   "DicomCanvas: Before render guards - isLoadingDicom:",
+  //   isLoadingDicom,
+  //   "dicomData:",
+  //   !!dicomData,
+  //   "image:",
+  //   !!image,
+  //   "currentImageDisplay:",
+  //   !!currentImageDisplay,
+  //   "dimensions:",
+  //   !!dimensions,
+  // );
 
-  if (isLoadingDicom || (dicomData && !image)) {
+  // --- Render Guards ---
+  if (isLoadingDicom || (dicomData && (!image || !currentImageDisplay))) {
+    // console.log("DicomCanvas: Rendering LOADING DICOM state");
     return (
       <div
         ref={containerRef}
@@ -394,17 +845,32 @@ export function DicomCanvas() {
       </div>
     );
   }
-  if (!dimensions) {
+
+  // CRITICAL FIX: Ensure dimensions are valid before rendering Stage
+  if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) {
+    // console.log(
+    //   `DicomCanvas: Rendering INITIALIZING CANVAS state (dimensions: ${
+    //     dimensions ? `${dimensions.width}x${dimensions.height}` : "null"
+    //   })`,
+    // );
     return (
       <div
         ref={containerRef}
         className="w-full h-full bg-black flex items-center justify-center"
       >
-        <p className="text-text-primary">Initializing canvas...</p>
+        <p className="text-text-primary">
+          Initializing canvas (
+          {dimensions
+            ? `width: ${dimensions.width}, height: ${dimensions.height}`
+            : "waiting for dimensions"}
+          )...
+        </p>
       </div>
     );
   }
-  if (!image) {
+
+  if (!image || !currentImageDisplay) {
+    // console.log("DicomCanvas: Rendering NO DICOM IMAGE LOADED state");
     return (
       <div
         ref={containerRef}
@@ -418,221 +884,73 @@ export function DicomCanvas() {
       </div>
     );
   }
+  // console.log(
+  //   "DicomCanvas: Proceeding to full render. currentImageDisplay:",
+  //   currentImageDisplay,
+  //   "Fit:",
+  //   fit,
+  // );
 
-  const { scale: fitScaleVal, offsetX, offsetY } = fit;
-  const {
-    scale: userScale,
-    position: userPosition,
-    rotation,
-    flipX,
-    flipY,
-  } = imageTransformations;
-  const totalStageScale = userScale * (fitScaleVal || 1);
-  const itemScale = 1 / totalStageScale;
+  const { scale: userAppliedScale, position: userAppliedPosition } =
+    imageTransformations;
+
+  // Robust scale calculation
+  const baseFitScale = fit.scale > 0 ? fit.scale : 1; // Ensure fit.scale is positive
+  let calculatedTotalStageScale = userAppliedScale * baseFitScale;
+  if (calculatedTotalStageScale <= 0 || !isFinite(calculatedTotalStageScale)) {
+    console.warn(
+      `Invalid calculatedTotalStageScale (${calculatedTotalStageScale}), defaulting to 1.`,
+    );
+    calculatedTotalStageScale = 1;
+  }
+  const currentTotalStageScale = calculatedTotalStageScale;
+
+  const currentStageX = userAppliedPosition.x + fit.offsetX;
+  const currentStageY = userAppliedPosition.y + fit.offsetY;
+
+  let calculatedItemScale = 1 / currentTotalStageScale;
+  if (
+    calculatedItemScale <= 0 ||
+    !isFinite(calculatedItemScale) ||
+    calculatedItemScale > 1000
+  ) {
+    // Add upper bound for sanity
+    // console.warn(`Invalid calculatedItemScale (${calculatedItemScale}) from total scale ${currentTotalStageScale}, defaulting to 1.`);
+    calculatedItemScale = 1;
+  }
+  const itemScale = calculatedItemScale;
 
   const getCursor = () => {
-    if (isDraggingCrop) return "move";
-    const stage = stageRef.current;
-    if (stage && toolUIState.showCropInterface) {
-      const pointer = stage.getPointerPosition();
-      if (pointer) {
-        const shape = stage.getIntersection(pointer);
-        if (shape && shape.name()?.startsWith("crop-handle-")) {
-          return shape.getAttr("cursorStyle") || "crosshair";
-        }
-      }
-    }
     if (toolUIState.showCropInterface) return "crosshair";
-    if (activeAnnotationTool) return "crosshair";
-    if (isDrawing) return "crosshair";
-    return "grab";
+    if (activeAnnotationTool === "text") return "text";
+    if (activeAnnotationTool) return "crosshair"; // For freehand, measure, highlight
+    return "grab"; // Default for panning
   };
 
-  const TextConfigPanel = () => (
-    <div className="absolute top-4 right-4 bg-gray-800 p-4 rounded-lg shadow-lg z-20 text-white">
-      <h3 className="mb-2 font-semibold">Text Settings</h3>
-      <div className="space-y-2">
-        <div>
-          <label className="text-sm block">
-            Font Size: {textConfig.fontSize}px
-          </label>
-          <input
-            type="range"
-            min="8"
-            max="72"
-            value={textConfig.fontSize}
-            onChange={(e) =>
-              setTextConfig((prev) => ({
-                ...prev,
-                fontSize: parseInt(e.target.value),
-              }))
-            }
-            className="w-full accent-accent-blue"
-          />
-        </div>
-        <div>
-          <label className="text-sm block">Color:</label>
-          <input
-            type="color"
-            value={textConfig.color}
-            onChange={(e) =>
-              setTextConfig((prev) => ({ ...prev, color: e.target.value }))
-            }
-            className="w-full h-8 p-0 border-0 rounded cursor-pointer"
-          />
-        </div>
-      </div>
-    </div>
-  );
-  const ZoomPanel = () => (
-    <div className="absolute top-4 left-4 bg-gray-800 p-4 rounded-lg shadow-lg z-20 min-w-[200px] text-white">
-      <h3 className="mb-3 font-semibold">Zoom Controls</h3>
-      <div className="space-y-3">
-        <div>
-          <label className="text-sm block mb-1">
-            Zoom: {Math.round(imageTransformations.scale * 100)}%{" "}
-          </label>
-          <input
-            type="range"
-            min="0.1"
-            max="10"
-            step="0.05"
-            value={imageTransformations.scale}
-            onChange={(e) =>
-              setImageTransformation("scale", parseFloat(e.target.value))
-            }
-            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-accent-blue"
-          />
-          <div className="flex justify-between text-xs text-gray-400 mt-1">
-            <span>10%</span>
-            <span>1000%</span>
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setImageTransformation("scale", 1)}
-            className="flex-1 px-3 py-1.5 bg-accent-blue text-white text-sm rounded hover:bg-blue-700 transition-colors"
-          >
-            100%
-          </button>
-          <button
-            onClick={() => resetZoom()}
-            className="flex-1 px-3 py-1.5 bg-gray-600 text-white text-sm rounded hover:bg-gray-700 transition-colors"
-          >
-            Fit Screen
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-  const BrightnessContrastPanel = () => (
-    <div className="absolute top-4 left-4 bg-gray-800 p-4 rounded-lg shadow-lg z-20 min-w-[200px] text-white">
-      <h3 className="mb-3 font-semibold">Brightness & Contrast</h3>
-      <div className="space-y-4">
-        <div>
-          <label className="text-sm block mb-1">
-            Brightness: {imageFilters.brightness}
-          </label>
-          <input
-            type="range"
-            min="-100"
-            max="100"
-            value={imageFilters.brightness}
-            onChange={(e) =>
-              setImageFilter("brightness", parseInt(e.target.value))
-            }
-            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-accent-blue"
-          />
-          <div className="flex justify-between text-xs text-gray-400 mt-1">
-            <span>Dark</span>
-            <span>Default</span>
-            <span>Bright</span>
-          </div>
-        </div>
-        <div>
-          <label className="text-sm block mb-1">
-            Contrast: {imageFilters.contrast}
-          </label>
-          <input
-            type="range"
-            min="-100"
-            max="100"
-            value={imageFilters.contrast}
-            onChange={(e) =>
-              setImageFilter("contrast", parseInt(e.target.value))
-            }
-            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-accent-blue"
-          />
-          <div className="flex justify-between text-xs text-gray-400 mt-1">
-            <span>Low</span>
-            <span>Default</span>
-            <span>High</span>
-          </div>
-        </div>
-        <button
-          onClick={() => {
-            setImageFilter("brightness", 0);
-            setImageFilter("contrast", 0);
-          }}
-          className="w-full px-3 py-2 bg-gray-600 text-white text-sm rounded hover:bg-gray-700 transition-colors"
-        >
-          Reset Adjustments
-        </button>
-      </div>
-    </div>
-  );
-  const CropControlPanel = () => (
-    <div className="absolute top-4 right-4 bg-gray-800 p-4 rounded-lg shadow-lg z-20 text-white min-w-[220px]">
-      <h3 className="mb-3 font-semibold">Crop Controls</h3>
-      <div className="space-y-3">
-        {cropBounds && (
-          <div className="text-xs text-gray-300 grid grid-cols-2 gap-x-2">
-            <span>X: {Math.round(cropBounds.x)}</span>{" "}
-            <span>Y: {Math.round(cropBounds.y)}</span>
-            <span>W: {Math.round(cropBounds.width)}</span>{" "}
-            <span>H: {Math.round(cropBounds.height)}</span>
-          </div>
-        )}
-        <div className="flex flex-col gap-2">
-          <button
-            onClick={handleApplyInAppCrop}
-            disabled={
-              !cropBounds || cropBounds.width <= 0 || cropBounds.height <= 0
-            }
-            className="px-3 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700 transition-colors disabled:bg-gray-500 disabled:cursor-not-allowed"
-          >
-            Apply Crop to Image
-          </button>
-          <button
-            onClick={() => {
-              if (image) {
-                setCropBounds({
-                  x: image.width * 0.25,
-                  y: image.height * 0.25,
-                  width: image.width * 0.5,
-                  height: image.height * 0.5,
-                });
-              }
-            }}
-            className="px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors"
-          >
-            Reset Area
-          </button>
-          <button
-            onClick={() => {
-              setCropBounds(null);
-              setToolUIVisibility("showCropInterface", false);
-            }}
-            className="px-3 py-2 bg-gray-600 text-white text-sm rounded hover:bg-gray-700 transition-colors"
-          >
-            Cancel Crop
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+  const CropControlPanel = () =>
+    // Placeholder for if you create a separate Crop panel component
+    toolUIState.showCropInterface ? <div>Crop Controls Active</div> : null;
 
   let classificationTextYOffset = 10;
+  // console.log("DicomCanvas: Stage Props:", {
+  //   width: dimensions.width,
+  //   height: dimensions.height,
+  //   x: currentStageX,
+  //   y: currentStageY,
+  //   scaleX: currentTotalStageScale,
+  // });
+  // console.log("DicomCanvas: Image Group Props:", {
+  //   offsetX: currentImageDisplay.konvaImageWidth / 2,
+  //   offsetY: currentImageDisplay.konvaImageHeight / 2,
+  //   x: currentImageDisplay.konvaImageWidth / 2,
+  //   y: currentImageDisplay.konvaImageHeight / 2,
+  //   rotation: imageTransformations.rotation,
+  // });
+  // console.log("DicomCanvas: KonvaImage Props:", {
+  //   width: currentImageDisplay.konvaImageWidth,
+  //   height: currentImageDisplay.konvaImageHeight,
+  //   crop: currentImageDisplay.cropToApply,
+  // });
 
   return (
     <div
@@ -644,211 +962,208 @@ export function DicomCanvas() {
         ref={stageRef}
         width={dimensions.width}
         height={dimensions.height}
-        x={userPosition.x + offsetX}
-        y={userPosition.y + offsetY}
-        scaleX={totalStageScale}
-        scaleY={totalStageScale}
+        x={currentStageX}
+        y={currentStageY}
+        scaleX={currentTotalStageScale}
+        scaleY={currentTotalStageScale}
         draggable={
           !activeAnnotationTool &&
           !isDrawing &&
           !toolUIState.showCropInterface &&
-          !isDraggingCrop
+          !isDrawingCropRect
         }
-        onDragEnd={(e) =>
-          setStageZoomAndPosition(e.target.scaleX() / (fitScaleVal || 1), {
-            x: e.target.x() - offsetX,
-            y: e.target.y() - offsetY,
-          })
-        }
+        onDragEnd={(e) => {
+          const newPos = {
+            x: e.target.x() - fit.offsetX,
+            y: e.target.y() - fit.offsetY,
+          };
+          setStageZoomAndPosition(imageTransformations.scale, newPos);
+        }}
         onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={() => {
-          if (isDrawing)
+          // Added onMouseLeave to reset drawing state if mouse leaves canvas
+          if (isDrawing && !isDrawingCropRect) {
+            // Only if drawing annotations, not crop rect
+            // console.log("DicomCanvas: Mouse left while drawing, cancelling draw.");
+            // Depending on tool, either finish or cancel. For now, let's cancel path-based.
             useToolStore.setState({
               isDrawing: false,
               currentDrawingPoints: [],
             });
+          }
+          // If drawing crop rect and mouse leaves, it will be finalized on mouse up (even outside)
+          // or could be cancelled here if desired.
         }}
       >
         <Layer>
-          <KonvaImage
-            ref={imageNodeRef}
-            image={image}
-            x={image.width / 2}
-            y={image.height / 2}
-            width={image.width}
-            height={image.height}
-            rotation={rotation}
-            scaleX={flipX ? -1 : 1}
-            scaleY={flipY ? -1 : 1}
-            offsetX={image.width / 2}
-            offsetY={image.height / 2}
-            filters={imageFilters.invert ? [Konva.Filters.Invert] : []}
-            brightness={mapBrightnessToKonva(imageFilters.brightness)}
-            contrast={mapContrastToKonva(imageFilters.contrast)}
-            listening={false}
-          />
-        </Layer>
-
-        <Layer name="ai-annotations-layer">
-          {aiAnnotations.detections
-            .filter((det: BoundingBox) => det.visible) // MODIFIED
-            .map((det: BoundingBox) => {
-              // MODIFIED
-              const boxColor =
-                AI_COLORS[det.label] || AI_COLORS.detection_default;
-              return (
-                <Group key={det.id} listening={false}>
-                  <KonvaRect
-                    x={det.x1}
-                    y={det.y1}
-                    width={det.x2 - det.x1}
-                    height={det.y2 - det.y1}
-                    stroke={boxColor}
-                    strokeWidth={2 * itemScale}
-                  />
-                  <Label x={det.x1} y={det.y1 - 14 * itemScale} opacity={0.9}>
-                    <Tag
-                      fill={boxColor}
-                      pointerDirection="down"
-                      pointerWidth={6 * itemScale}
-                      pointerHeight={4 * itemScale}
-                      lineJoin="round"
-                      cornerRadius={3 * itemScale}
-                    />
-                    <Text
-                      text={`${det.label} ${det.confidence ? det.confidence.toFixed(2) : ""}`}
-                      fontSize={10 * itemScale}
-                      padding={3 * itemScale}
-                      fill="white"
-                    />
-                  </Label>
-                </Group>
-              );
-            })}
-          {aiAnnotations.segmentations
-            .filter((seg: SegmentationContour) => seg.visible) // MODIFIED
-            .map((seg: SegmentationContour) => {
-              // MODIFIED
-              const segColor =
-                AI_COLORS[seg.label || "segmentation_default"] ||
-                AI_COLORS.segmentation_default;
-              return (
-                <Line
-                  key={seg.id}
-                  points={seg.points.flat()}
-                  stroke={segColor}
-                  strokeWidth={2 * itemScale}
-                  closed={true}
-                  tension={0}
-                  listening={false}
-                />
-              );
-            })}
+          <Group
+            ref={imageGroupRef}
+            offsetX={currentImageDisplay.konvaImageWidth / 2}
+            offsetY={currentImageDisplay.konvaImageHeight / 2}
+            x={currentImageDisplay.konvaImageWidth / 2}
+            y={currentImageDisplay.konvaImageHeight / 2}
+            rotation={imageTransformations.rotation}
+            scaleX={imageTransformations.flipX ? -1 : 1}
+            scaleY={imageTransformations.flipY ? -1 : 1}
+          >
+            <KonvaImage
+              ref={imageNodeRef}
+              image={image}
+              x={0}
+              y={0}
+              width={currentImageDisplay.konvaImageWidth}
+              height={currentImageDisplay.konvaImageHeight}
+              crop={currentImageDisplay.cropToApply}
+              filters={imageFilters.invert ? [Konva.Filters.Invert] : []}
+              brightness={mapBrightnessToKonva(imageFilters.brightness)}
+              contrast={mapContrastToKonva(imageFilters.contrast)}
+              listening={
+                // Only listen if not cropping or annotating (stage handles those)
+                !toolUIState.showCropInterface && !activeAnnotationTool
+              }
+            />
+            {toolUIState.showCropInterface && cropUIRect_Display && (
+              <KonvaRect
+                x={cropUIRect_Display.x}
+                y={cropUIRect_Display.y}
+                width={cropUIRect_Display.width}
+                height={cropUIRect_Display.height}
+                stroke="rgba(255, 0, 0, 0.8)"
+                strokeWidth={1.5 * itemScale} // Ensure itemScale is valid
+                dash={[4 * itemScale, 2 * itemScale]}
+                listening={false} // Crop UI rect should not be interactive itself
+              />
+            )}
+          </Group>
         </Layer>
 
         {showAnnotations && (
-          <Layer name="user-annotations-layer">
-            {annotations.map((ann) => {
-              if (
-                (ann.type === "freehand" ||
-                  ann.type === "highlight" ||
-                  ann.type === "measurement") &&
-                ann.points
-              ) {
-                return (
-                  <Group key={ann.id}>
-                    <Line
-                      points={ann.points}
-                      stroke={ann.color}
-                      strokeWidth={(ann.strokeWidth || 2) * itemScale}
-                      tension={ann.type === "freehand" ? 0.5 : 0}
-                      lineCap="round"
-                      lineJoin="round"
-                      opacity={ann.type === "highlight" ? 0.5 : 1}
-                    />
-                    {ann.type === "measurement" && ann.points.length >= 4 && (
-                      <>
-                        <Circle
-                          x={ann.points[0]}
-                          y={ann.points[1]}
-                          radius={3 * itemScale}
-                          fill={ann.color}
+          <Layer
+            name="user-annotations-layer"
+            listening={!toolUIState.showCropInterface} // Annotations not active during crop
+          >
+            <Group /* Group for annotations, mirrors image group transforms */
+              offsetX={currentImageDisplay.konvaImageWidth / 2}
+              offsetY={currentImageDisplay.konvaImageHeight / 2}
+              x={currentImageDisplay.konvaImageWidth / 2}
+              y={currentImageDisplay.konvaImageHeight / 2}
+              rotation={imageTransformations.rotation}
+              scaleX={imageTransformations.flipX ? -1 : 1}
+              scaleY={imageTransformations.flipY ? -1 : 1}
+            >
+              {annotations
+                .filter((ann) => ann && ann.type) // Safety filter
+                .map((ann: Annotation) => {
+                  if (
+                    (ann.type === "freehand" ||
+                      ann.type === "highlight" ||
+                      ann.type === "measurement") &&
+                    ann.points
+                  ) {
+                    return (
+                      <Group key={ann.id}>
+                        <Line
+                          points={ann.points}
+                          stroke={ann.color}
+                          strokeWidth={(ann.strokeWidth || 2) * itemScale}
+                          tension={ann.type === "freehand" ? 0.5 : 0}
+                          lineCap="round"
+                          lineJoin="round"
+                          opacity={ann.type === "highlight" ? 0.5 : 1}
                         />
-                        <Circle
-                          x={ann.points[ann.points.length - 2]}
-                          y={ann.points[ann.points.length - 1]}
-                          radius={3 * itemScale}
-                          fill={ann.color}
-                        />
-                        {ann.text && (
-                          <Text
-                            x={
-                              (ann.points[0] +
-                                ann.points[ann.points.length - 2]) /
-                                2 +
-                              5 * itemScale
-                            }
-                            y={
-                              (ann.points[1] +
-                                ann.points[ann.points.length - 1]) /
-                                2 -
-                              10 * itemScale
-                            }
-                            text={ann.text}
-                            fontSize={12 * itemScale}
-                            fill={ann.color}
-                            align="center"
-                            listening={false}
-                          />
-                        )}
-                      </>
-                    )}
-                  </Group>
-                );
-              } else if (ann.type === "text" && ann.text && ann.position) {
-                return (
-                  <Text
-                    key={ann.id}
-                    x={ann.position.x}
-                    y={ann.position.y}
-                    text={ann.text}
-                    fontSize={(ann.fontSize || 16) * itemScale}
-                    fill={ann.color || "#00FF00"}
-                    draggable
-                    onDragEnd={(e) => {
-                      if (updateAnnotation) {
-                        updateAnnotation(ann.id, {
-                          position: { x: e.target.x(), y: e.target.y() },
-                        });
-                      }
-                    }}
-                  />
-                );
-              }
-              return null;
-            })}
-            {isDrawing &&
-              currentDrawingPoints.length >= 2 &&
-              activeAnnotationTool &&
-              ["freehand", "highlight", "measurement"].includes(
-                activeAnnotationTool,
-              ) && (
-                <Group>
+                        {ann.type === "measurement" &&
+                          ann.points.length >= 4 && (
+                            <>
+                              <Circle
+                                x={ann.points[0]}
+                                y={ann.points[1]}
+                                radius={3 * itemScale}
+                                fill={ann.color}
+                              />
+                              <Circle
+                                x={ann.points[ann.points.length - 2]}
+                                y={ann.points[ann.points.length - 1]}
+                                radius={3 * itemScale}
+                                fill={ann.color}
+                              />
+                              {ann.text &&
+                                ann.text.trim() !== "" && ( // FIX: Ensure text is not empty
+                                  <Text
+                                    x={
+                                      (ann.points[0] +
+                                        ann.points[ann.points.length - 2]) /
+                                        2 +
+                                      5 * itemScale
+                                    }
+                                    y={
+                                      (ann.points[1] +
+                                        ann.points[ann.points.length - 1]) /
+                                        2 -
+                                      10 * itemScale
+                                    }
+                                    text={ann.text}
+                                    fontSize={12 * itemScale}
+                                    fill={ann.color}
+                                  />
+                                )}
+                            </>
+                          )}
+                      </Group>
+                    );
+                  } else if (
+                    ann.type === "text" &&
+                    ann.text &&
+                    ann.text.trim() !== "" &&
+                    ann.position
+                  ) {
+                    // FIX: Ensure text is not empty
+                    return (
+                      <Text
+                        key={ann.id}
+                        x={ann.position.x}
+                        y={ann.position.y}
+                        text={ann.text}
+                        fontSize={(ann.fontSize || 16) * itemScale}
+                        fill={ann.color || "#00FF00"}
+                        draggable
+                        onDragEnd={(e) => {
+                          if (updateAnnotation)
+                            updateAnnotation(ann.id, {
+                              position: { x: e.target.x(), y: e.target.y() },
+                            });
+                        }}
+                      />
+                    );
+                  }
+                  return null;
+                })}
+              {/* Current drawing preview */}
+              {isDrawing &&
+                currentDrawingPoints.length >= 2 &&
+                activeAnnotationTool &&
+                ["freehand", "highlight", "measurement"].includes(
+                  activeAnnotationTool,
+                ) && (
                   <Line
                     points={currentDrawingPoints}
                     stroke={
-                      activeAnnotationTool === "freehand"
-                        ? "#FF00FF"
-                        : activeAnnotationTool === "highlight"
-                          ? "rgba(255,165,0,0.5)"
-                          : "#00FFFF"
+                      activeAnnotationTool === "highlight"
+                        ? "rgba(255,255,0,0.5)"
+                        : activeAnnotationTool === "measurement"
+                          ? "#00FFFF" // Preview color for measurement
+                          : activeAnnotationTool === "freehand"
+                            ? freehandColor // Use store's freehand color for preview
+                            : "#FF00FF" // Fallback
                     }
                     strokeWidth={
-                      (activeAnnotationTool === "highlight" ? 20 : 2) *
-                      itemScale
+                      (activeAnnotationTool === "highlight"
+                        ? 20
+                        : activeAnnotationTool === "freehand"
+                          ? freehandStrokeWidth // Use store's width for preview
+                          : 2) * itemScale
                     }
                     tension={activeAnnotationTool === "freehand" ? 0.5 : 0}
                     lineCap="round"
@@ -859,245 +1174,122 @@ export function DicomCanvas() {
                         : undefined
                     }
                   />
-                  {activeAnnotationTool === "measurement" &&
-                    currentDrawingPoints.length >= 4 && (
-                      <>
-                        <Circle
-                          x={currentDrawingPoints[0]}
-                          y={currentDrawingPoints[1]}
-                          radius={3 * itemScale}
-                          fill="#00FFFF"
-                        />
-                        <Circle
-                          x={
-                            currentDrawingPoints[
-                              currentDrawingPoints.length - 2
-                            ]
-                          }
-                          y={
-                            currentDrawingPoints[
-                              currentDrawingPoints.length - 1
-                            ]
-                          }
-                          radius={3 * itemScale}
-                          fill="#00FFFF"
-                        />
-                      </>
-                    )}
+                )}
+            </Group>
+          </Layer>
+        )}
+
+        <Layer name="ai-annotations-layer" listening={false}>
+          <Group /* Group for AI annotations, mirrors image group transforms */
+            offsetX={currentImageDisplay.konvaImageWidth / 2}
+            offsetY={currentImageDisplay.konvaImageHeight / 2}
+            x={currentImageDisplay.konvaImageWidth / 2}
+            y={currentImageDisplay.konvaImageHeight / 2}
+            rotation={imageTransformations.rotation}
+            scaleX={imageTransformations.flipX ? -1 : 1}
+            scaleY={imageTransformations.flipY ? -1 : 1}
+          >
+            {aiAnnotations.detections
+              .filter((det) => det && det.visible)
+              .map((det: BoundingBox) => (
+                <Group key={det.id}>
+                  <KonvaRect
+                    x={det.x1}
+                    y={det.y1}
+                    width={det.x2 - det.x1}
+                    height={det.y2 - det.y1}
+                    stroke={AI_COLORS[det.label] || AI_COLORS.detection_default}
+                    strokeWidth={2 * itemScale}
+                    listening={false}
+                  />
+                  {/* Optional: Label for detection box */}
+                  {det.label && (
+                    <Text
+                      x={det.x1}
+                      y={
+                        det.y1 - 14 * itemScale < 0
+                          ? det.y1 + 2 * itemScale
+                          : det.y1 - 14 * itemScale
+                      } // Position above or inside
+                      text={`${det.label}${det.confidence ? ` (${(det.confidence * 100).toFixed(0)}%)` : ""}`}
+                      fontSize={12 * itemScale}
+                      fill={AI_COLORS[det.label] || AI_COLORS.detection_default}
+                      padding={2 * itemScale}
+                      background="rgba(0,0,0,0.5)"
+                    />
+                  )}
                 </Group>
-              )}
-          </Layer>
-        )}
-
-        {toolUIState.showCropInterface && image && cropBounds && (
-          <Layer name="crop-interface-layer">
-            <KonvaRect
-              x={cropBounds.x}
-              y={cropBounds.y}
-              width={cropBounds.width}
-              height={cropBounds.height}
-              stroke="red"
-              strokeWidth={2 * itemScale}
-              dash={[4 * itemScale, 2 * itemScale]}
-              draggable
-              dragBoundFunc={(pos) => ({
-                x: Math.max(0, Math.min(pos.x, image.width - cropBounds.width)),
-                y: Math.max(
-                  0,
-                  Math.min(pos.y, image.height - cropBounds.height),
-                ),
-              })}
-              onDragStart={handleCropDragStart}
-              onDragEnd={handleCropDragEnd}
-              name="crop-rect"
-            />
-            {[
-              {
-                x: cropBounds.x,
-                y: cropBounds.y,
-                cursor: "nwse-resize",
-                corner: "topLeft",
-              },
-              {
-                x: cropBounds.x + cropBounds.width,
-                y: cropBounds.y,
-                cursor: "nesw-resize",
-                corner: "topRight",
-              },
-              {
-                x: cropBounds.x,
-                y: cropBounds.y + cropBounds.height,
-                cursor: "nesw-resize",
-                corner: "bottomLeft",
-              },
-              {
-                x: cropBounds.x + cropBounds.width,
-                y: cropBounds.y + cropBounds.height,
-                cursor: "nwse-resize",
-                corner: "bottomRight",
-              },
-            ].map((handle) => (
-              <Circle
-                key={`handle-${handle.corner}`}
-                name={`crop-handle-${handle.corner}`}
-                x={handle.x}
-                y={handle.y}
-                radius={8 * itemScale}
-                fill="red"
-                stroke="white"
-                strokeWidth={1.5 * itemScale}
-                draggable
-                dragBoundFunc={(pos) => {
-                  let newX = pos.x;
-                  let newY = pos.y;
-                  newX = Math.max(0, Math.min(newX, image.width));
-                  newY = Math.max(0, Math.min(newY, image.height));
-                  return { x: newX, y: newY };
-                }}
-                onDragStart={handleCropDragStart}
-                onDragMove={(e) => {
-                  const newPointerX = e.target.x();
-                  const newPointerY = e.target.y();
-                  if (!cropBounds || !image) return;
-                  const newBounds = { ...cropBounds };
-                  const MIN_SIZE = Math.max(
-                    10,
-                    image.width / 50,
-                    image.height / 50,
-                  );
-                  switch (handle.corner) {
-                    case "topLeft":
-                      newBounds.width = Math.max(
-                        MIN_SIZE,
-                        cropBounds.x + cropBounds.width - newPointerX,
-                      );
-                      newBounds.height = Math.max(
-                        MIN_SIZE,
-                        cropBounds.y + cropBounds.height - newPointerY,
-                      );
-                      newBounds.x =
-                        cropBounds.x + cropBounds.width - newBounds.width;
-                      newBounds.y =
-                        cropBounds.y + cropBounds.height - newBounds.height;
-                      break;
-                    case "topRight":
-                      newBounds.width = Math.max(
-                        MIN_SIZE,
-                        newPointerX - cropBounds.x,
-                      );
-                      newBounds.height = Math.max(
-                        MIN_SIZE,
-                        cropBounds.y + cropBounds.height - newPointerY,
-                      );
-                      newBounds.y =
-                        cropBounds.y + cropBounds.height - newBounds.height;
-                      break;
-                    case "bottomLeft":
-                      newBounds.width = Math.max(
-                        MIN_SIZE,
-                        cropBounds.x + cropBounds.width - newPointerX,
-                      );
-                      newBounds.height = Math.max(
-                        MIN_SIZE,
-                        newPointerY - cropBounds.y,
-                      );
-                      newBounds.x =
-                        cropBounds.x + cropBounds.width - newBounds.width;
-                      break;
-                    case "bottomRight":
-                      newBounds.width = Math.max(
-                        MIN_SIZE,
-                        newPointerX - cropBounds.x,
-                      );
-                      newBounds.height = Math.max(
-                        MIN_SIZE,
-                        newPointerY - cropBounds.y,
-                      );
-                      break;
+              ))}
+            {aiAnnotations.segmentations
+              .filter((seg) => seg && seg.visible)
+              .map((seg: SegmentationContour) => (
+                <Line
+                  key={seg.id}
+                  points={seg.points.flat()} // Konva Line expects flat array of numbers
+                  stroke={
+                    AI_COLORS[seg.label || ""] || AI_COLORS.segmentation_default
                   }
-                  newBounds.x = Math.max(
-                    0,
-                    Math.min(newBounds.x, image.width - MIN_SIZE),
-                  );
-                  newBounds.y = Math.max(
-                    0,
-                    Math.min(newBounds.y, image.height - MIN_SIZE),
-                  );
-                  newBounds.width = Math.min(
-                    newBounds.width,
-                    image.width - newBounds.x,
-                  );
-                  newBounds.height = Math.min(
-                    newBounds.height,
-                    image.height - newBounds.y,
-                  );
-                  if (newBounds.width < MIN_SIZE) newBounds.width = MIN_SIZE;
-                  if (newBounds.height < MIN_SIZE) newBounds.height = MIN_SIZE;
-                  setCropBounds(newBounds);
-                }}
-                onDragEnd={() => setIsDraggingCrop(false)}
-                onMouseEnter={(e) => {
-                  if (stageRef.current)
-                    stageRef.current.container().style.cursor = handle.cursor;
-                  e.target.setAttr("cursorStyle", handle.cursor);
-                }}
-                onMouseLeave={(e) => {
-                  if (stageRef.current)
-                    stageRef.current.container().style.cursor = getCursor();
-                  e.target.setAttr("cursorStyle", null);
-                }}
-              />
-            ))}
-            <Text
-              text="Adjust crop area. Coordinates are relative to original image."
-              x={cropBounds.x}
-              y={cropBounds.y - 20 * itemScale}
-              fontSize={12 * itemScale}
-              fill="rgba(255,0,0,0.8)"
-              listening={false}
-            />
-          </Layer>
-        )}
+                  strokeWidth={2 * itemScale}
+                  closed={true}
+                  fill={(
+                    AI_COLORS[seg.label || ""] || AI_COLORS.segmentation_default
+                  )
+                    .replace("0.9", "0.3")
+                    .replace("0.7", "0.2")} // Lighter fill
+                  listening={false}
+                />
+              ))}
+          </Group>
+        </Layer>
 
-        <Layer name="classification-overlay-layer">
+        <Layer name="classification-overlay-layer" listening={false}>
           {aiAnnotations.classifications
-            .filter((cls: ClassificationPrediction) => cls.visible) // MODIFIED
+            .filter((cls) => cls && cls.visible)
             .map((cls: ClassificationPrediction) => {
-              // MODIFIED
-              const clsColor =
-                AI_COLORS[cls.label] || AI_COLORS.classification_default;
-              const textNode = (
+              const textContent = `${cls.label}${cls.confidence ? ": " + (cls.confidence * 100).toFixed(0) + "%" : ""}`;
+              if (!textContent || textContent.trim() === "") {
+                // console.warn(
+                //   "Skipping classification text render due to empty content:",
+                //   cls,
+                // );
+                return null;
+              }
+              const node = (
                 <Text
                   key={cls.id}
-                  x={10 * itemScale}
-                  y={classificationTextYOffset * itemScale}
-                  text={`${cls.label}${cls.confidence ? ": " + cls.confidence.toFixed(2) : ""}`}
-                  fontSize={12 * itemScale}
-                  fill={clsColor}
-                  padding={5 * itemScale}
+                  x={10} // Keep classification text relative to stage, not image group
+                  y={classificationTextYOffset} // Scale applied by stage
+                  text={textContent}
+                  fontSize={12} // Base font size, will be scaled by stage
+                  fill={
+                    AI_COLORS[cls.label] || AI_COLORS.classification_default
+                  }
+                  padding={5}
                   background="rgba(0,0,0,0.6)"
                   listening={false}
                 />
               );
-              classificationTextYOffset += 18;
-              return textNode;
+              classificationTextYOffset += 18; // Increment for next classification text
+              return node;
             })}
         </Layer>
       </Stage>
-
-      {activeAnnotationTool === "text" && <TextConfigPanel />}
-      {toolUIState.showZoomPanel && <ZoomPanel />}
-      {toolUIState.showBrightnessContrastPanel &&
-        !toolUIState.showZoomPanel && <BrightnessContrastPanel />}
-      {toolUIState.showCropInterface && <CropControlPanel />}
-
+      {/* UI Panels - these will be positioned absolutely over the canvas */}
+      {activeAnnotationTool === "freehand" && <FreehandOptionsPanel />}
+      {toolUIState.showTextConfigPanel && activeAnnotationTool === "text" && (
+        <TextAnnotationOptionsPanel />
+      )}
+      {toolUIState.showZoomPanel && <ZoomControlPanel />}
+      {toolUIState.showBrightnessContrastPanel && <BrightnessContrastPanel />}
+      {toolUIState.showCropInterface && <CropControlPanel />}{" "}
+      {/* Placeholder if you create a separate component */}
       {(isAiLoading.detection ||
         isAiLoading.segmentation ||
         isAiLoading.classification) && (
         <div className="absolute inset-0 bg-black bg-opacity-60 flex items-center justify-center z-30 pointer-events-none">
-          <div className="flex flex-col items-center p-4 bg-primary-dark rounded-lg shadow-xl">
-            <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-accent-blue mb-3"></div>
-            <p className="text-text-primary text-sm">AI Analyzing Image...</p>
+          <div className="flex flex-col items-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent-blue mb-4"></div>
+            <p className="text-text-primary text-sm">AI Analyzing...</p>
           </div>
         </div>
       )}

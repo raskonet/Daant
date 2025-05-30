@@ -1,38 +1,57 @@
 // src/components/viewer/ImageToolsBar.tsx
 "use client";
 import React from "react";
-import { Icons } from "../../components/ui/icons"; // Adjust path if not using alias or if ui is elsewhere
-import { Button } from "../../components/ui/button"; // Adjust path
+import { Icons } from "../../components/ui/icons";
+import { Button } from "../../components/ui/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "../../components/ui/tooltip"; // Adjust path
+} from "../../components/ui/tooltip";
 import {
   useToolStore,
   ActiveAnnotationTool,
   ToolState,
-  ToolUIState,
+  ToolUIState, // Make sure this is exported from toolStore if not already
 } from "../../store/toolStore";
 
-// Define ToolConfig directly, using ToolState and ToolUIState for better type safety
 interface ToolConfig {
   id: string;
   icon: React.ElementType;
   label: string;
-  action?: (store: ToolState) => void; // Use ToolState directly
-  isActiveCheck?: (store: ToolState) => boolean; // Use ToolState directly
-  opensPanel?: keyof ToolUIState; // Directly use keyof ToolUIState
-  isAnnotationTool?: ActiveAnnotationTool;
-  isDisabled?: (store: ToolState) => boolean; // Use ToolState directly
+  action: (store: ToolState) => void; // All tools will now have a primary action
+  isActiveCheck?: (store: ToolState) => boolean;
+  isDisabled?: (store: ToolState) => boolean;
 }
+
+// Helper function to close all panels except specified ones
+const closeOtherPanels = (
+  store: ToolState,
+  ...keepOpen: Array<keyof ToolUIState>
+) => {
+  (Object.keys(store.toolUIState) as Array<keyof ToolUIState>).forEach(
+    (key) => {
+      if (!keepOpen.includes(key)) {
+        store.setToolUIVisibility(key, false);
+      }
+    },
+  );
+};
 
 const toolButtonsConfig: ToolConfig[] = [
   {
     id: "brightness-contrast",
     icon: Icons.Sun,
     label: "Brightness/Contrast",
-    opensPanel: "showBrightnessContrastPanel",
+    action: (store) => {
+      const currentlyShowing = store.toolUIState.showBrightnessContrastPanel;
+      closeOtherPanels(store, "showBrightnessContrastPanel");
+      store.setToolUIVisibility(
+        "showBrightnessContrastPanel",
+        !currentlyShowing,
+      );
+      if (!currentlyShowing) store.setActiveAnnotationTool(null); // Deactivate annotation if opening panel
+    },
     isActiveCheck: (store) => store.toolUIState.showBrightnessContrastPanel,
   },
   {
@@ -68,7 +87,12 @@ const toolButtonsConfig: ToolConfig[] = [
     id: "zoom-panel",
     icon: Icons.ZoomIn,
     label: "Zoom Controls",
-    opensPanel: "showZoomPanel",
+    action: (store) => {
+      const currentlyShowing = store.toolUIState.showZoomPanel;
+      closeOtherPanels(store, "showZoomPanel");
+      store.setToolUIVisibility("showZoomPanel", !currentlyShowing);
+      if (!currentlyShowing) store.setActiveAnnotationTool(null);
+    },
     isActiveCheck: (store) => store.toolUIState.showZoomPanel,
   },
   {
@@ -80,36 +104,73 @@ const toolButtonsConfig: ToolConfig[] = [
   {
     id: "crop",
     icon: Icons.Crop,
-    label: "Crop Image Selection",
-    opensPanel: "showCropInterface",
+    label: "Crop Image", // Updated label
+    action: (store) => {
+      const currentlyShowing = store.toolUIState.showCropInterface;
+      closeOtherPanels(store, "showCropInterface"); // Close other panels when toggling crop
+      store.setToolUIVisibility("showCropInterface", !currentlyShowing);
+      // if (currentlyShowing) { // If turning OFF crop UI
+      // store.resetCrop(); // Decide: should exiting crop UI always reset the sourceCrop?
+      // Or just hide the UI, keeping the visual crop?
+      // For now, let's assume resetCrop/Done Cropping button in panel handles this.
+      // }
+      if (!currentlyShowing) store.setActiveAnnotationTool(null); // Deactivate annotation if opening crop
+    },
     isActiveCheck: (store) => store.toolUIState.showCropInterface,
+  },
+  {
+    id: "metadata-editor", // NEW
+    icon: Icons.Settings2, // Or Icons.ListFilter or any other suitable icon
+    label: "Edit Metadata",
+    action: (store) => store.toggleMetadataEditor(), // toggleMetadataEditor handles panel logic
+    isActiveCheck: (store) => store.toolUIState.showMetadataEditor,
   },
   {
     id: "annotate-freehand",
     icon: Icons.Edit3,
     label: "Draw Freehand",
-    isAnnotationTool: "freehand",
+    action: (store) => {
+      closeOtherPanels(store);
+      store.setActiveAnnotationTool(
+        store.activeAnnotationTool === "freehand" ? null : "freehand",
+      );
+    },
     isActiveCheck: (store) => store.activeAnnotationTool === "freehand",
   },
   {
     id: "annotate-text",
     icon: Icons.Type,
     label: "Add Text",
-    isAnnotationTool: "text",
+    action: (store) => {
+      closeOtherPanels(store);
+      store.setActiveAnnotationTool(
+        store.activeAnnotationTool === "text" ? null : "text",
+      );
+    },
     isActiveCheck: (store) => store.activeAnnotationTool === "text",
   },
   {
     id: "annotate-highlight",
     icon: Icons.Highlighter,
     label: "Highlight Area",
-    isAnnotationTool: "highlight",
+    action: (store) => {
+      closeOtherPanels(store);
+      store.setActiveAnnotationTool(
+        store.activeAnnotationTool === "highlight" ? null : "highlight",
+      );
+    },
     isActiveCheck: (store) => store.activeAnnotationTool === "highlight",
   },
   {
     id: "annotate-measure",
     icon: Icons.Ruler,
     label: "Measure Distance",
-    isAnnotationTool: "measurement",
+    action: (store) => {
+      closeOtherPanels(store);
+      store.setActiveAnnotationTool(
+        store.activeAnnotationTool === "measurement" ? null : "measurement",
+      );
+    },
     isActiveCheck: (store) => store.activeAnnotationTool === "measurement",
   },
   {
@@ -123,7 +184,15 @@ const toolButtonsConfig: ToolConfig[] = [
     id: "clear-annotations",
     icon: Icons.Trash2,
     label: "Clear All Annotations",
-    action: (store) => store.clearAllAnnotations(),
+    action: (store) => {
+      if (
+        confirm(
+          "Are you sure you want to clear all user-drawn annotations? This cannot be undone easily.",
+        )
+      ) {
+        store.clearAllAnnotations();
+      }
+    },
   },
   {
     id: "undo",
@@ -136,53 +205,20 @@ const toolButtonsConfig: ToolConfig[] = [
     id: "reset-view",
     icon: Icons.RefreshCw,
     label: "Reset View (Filters & Transforms)",
-    action: (store) => store.resetAllFiltersAndTransforms(),
+    action: (store) => {
+      if (
+        confirm(
+          "Are you sure you want to reset all view adjustments (zoom, pan, filters, crop)?",
+        )
+      ) {
+        store.resetAllFiltersAndTransforms();
+      }
+    },
   },
 ];
 
 export function ImageToolsBar() {
-  const store = useToolStore(); // This should now return the fully typed ToolState
-
-  const handleToolClick = (toolConfig: ToolConfig) => {
-    console.log("[ImageToolsBar] Clicked:", toolConfig.label);
-
-    if (toolConfig.action) {
-      toolConfig.action(store); // store is ToolState
-    }
-
-    if (toolConfig.opensPanel) {
-      const panelAlreadyOpen = store.toolUIState[toolConfig.opensPanel];
-      (Object.keys(store.toolUIState) as Array<keyof ToolUIState>).forEach(
-        (key) => {
-          // Type assertion for keys
-          store.setToolUIVisibility(key, false);
-        },
-      );
-      if (!panelAlreadyOpen) {
-        store.setToolUIVisibility(toolConfig.opensPanel, true);
-      }
-      if (
-        store.toolUIState[toolConfig.opensPanel] &&
-        store.activeAnnotationTool
-      ) {
-        store.setActiveAnnotationTool(null);
-      }
-    }
-
-    if (toolConfig.isAnnotationTool) {
-      if (store.activeAnnotationTool === toolConfig.isAnnotationTool) {
-        store.setActiveAnnotationTool(null);
-      } else {
-        store.setActiveAnnotationTool(toolConfig.isAnnotationTool);
-        (Object.keys(store.toolUIState) as Array<keyof ToolUIState>).forEach(
-          (key) => {
-            // Type assertion for keys
-            store.setToolUIVisibility(key, false);
-          },
-        );
-      }
-    }
-  };
+  const store = useToolStore();
 
   return (
     <div className="w-14 bg-primary-dark flex flex-col items-center py-3 space-y-1 border-r border-border-dark shrink-0">
@@ -203,10 +239,10 @@ export function ImageToolsBar() {
                 size="icon"
                 className={`w-10 h-10 transition-colors ${
                   isCurrentlyActive
-                    ? "bg-accent-blue text-white"
-                    : "text-text-secondary hover:bg-secondary-dark hover:text-text-primary"
+                    ? "bg-accent-blue text-white" // Active state
+                    : "text-text-secondary hover:bg-secondary-dark hover:text-text-primary" // Default state
                 } ${isDisabled ? "opacity-50 cursor-not-allowed" : ""}`}
-                onClick={() => handleToolClick(toolConfig)}
+                onClick={() => toolConfig.action(store)} // Directly call the action from config
                 aria-label={toolConfig.label}
                 aria-pressed={isCurrentlyActive}
                 disabled={isDisabled}
