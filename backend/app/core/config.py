@@ -29,6 +29,7 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://localhost:3001",
         "https://daant-zydm-git-master-steppes-projects.vercel.app",
+        "https://daant-zydm.vercel.app",
     ]
 
     UVICORN_HOST: str = "0.0.0.0"
