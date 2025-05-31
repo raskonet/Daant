@@ -1,4 +1,3 @@
-// src/components/viewer/DicomCanvas.tsx
 "use client";
 import React, {
   useEffect,
@@ -30,7 +29,6 @@ import {
   Annotation,
 } from "../../store/toolStore";
 import { Icons } from "../../components/ui/icons";
-// import { Button } from "../../components/ui/button"; // Not used in this file directly
 import {
   BoundingBox,
   SegmentationContour,
@@ -42,13 +40,10 @@ import { ZoomControlPanel } from "./ZoomControlPanel";
 import { BrightnessContrastPanel } from "./BrightnessContrastPanel";
 
 const AI_COLORS: Record<string, string> = {
-  detection_default: "rgba(239, 68, 68, 0.9)",
-  Caries: "rgba(249, 115, 22, 0.9)",
-  Calculus_detection: "rgba(168, 85, 247, 0.9)",
-  segmentation_default: "rgba(34, 197, 94, 0.7)",
-  "Tooth Segment": "rgba(59, 130, 246, 0.7)",
-  classification_default: "rgba(14, 165, 233, 0.9)",
-  Calculus: "rgba(139, 92, 246, 0.9)",
+  cavity: "rgba(245, 158, 11, 0.9)", // Amber/Orange for "cavity"
+  pa: "rgba(168, 85, 247, 0.9)", // Purple for "pa"
+
+  detection_default: "rgba(0, 255, 0, 0.9)",
 };
 
 let dicomCanvasRenderCount = 0;
@@ -1189,7 +1184,7 @@ export function DicomCanvas() {
             scaleX={imageTransformations.flipX ? -1 : 1}
             scaleY={imageTransformations.flipY ? -1 : 1}
           >
-            {aiAnnotations.detections
+            {aiAnnotations.detections // Only render detections
               .filter((det) => det && det.visible)
               .map((det: BoundingBox) => (
                 <Group key={det.id}>
@@ -1198,81 +1193,91 @@ export function DicomCanvas() {
                     y={det.y1}
                     width={det.x2 - det.x1}
                     height={det.y2 - det.y1}
-                    stroke={AI_COLORS[det.label] || AI_COLORS.detection_default}
+                    stroke={AI_COLORS[det.label] || AI_COLORS.detection_default} // Use updated AI_COLORS
                     strokeWidth={2 * itemScale}
                     listening={false}
                   />
                   {/* Optional: Label for detection box */}
-                  {det.label && (
+                  {det.label && ( // Check if label exists
                     <Text
                       x={det.x1}
                       y={
-                        det.y1 - 14 * itemScale < 0
-                          ? det.y1 + 2 * itemScale
-                          : det.y1 - 14 * itemScale
-                      } // Position above or inside
+                        det.y1 - 14 * itemScale < 0 // Check if label fits above
+                          ? det.y1 + 2 * itemScale // Position below if no space above
+                          : det.y1 - 14 * itemScale // Position above
+                      }
                       text={`${det.label}${det.confidence ? ` (${(det.confidence * 100).toFixed(0)}%)` : ""}`}
                       fontSize={12 * itemScale}
                       fill={AI_COLORS[det.label] || AI_COLORS.detection_default}
                       padding={2 * itemScale}
-                      background="rgba(0,0,0,0.5)"
+                      // Simple background for text for better visibility
+                      // You might want to use Konva.Label and Konva.Tag for a proper background box
+                      // For simplicity, a semi-transparent fill can work if text background is not critical
+                      // background="rgba(0,0,0,0.5)" // Or remove if you use Label/Tag
+                      // Using Label for better background handling:
+                      // This requires importing Label and Tag from 'react-konva'
+                      // Example with Label and Tag:
+                      // (Remove the Text component above if using Label/Tag below)
                     />
+                  )}
+                  {/* More robust label with background using Label and Tag: */}
+                  {det.label && (
+                    <Label
+                      x={det.x1}
+                      y={
+                        det.y1 - 14 * itemScale < 0
+                          ? det.y1
+                          : det.y1 - 14 * itemScale
+                      }
+                      opacity={0.85}
+                    >
+                      <Tag
+                        fill={"black"}
+                        pointerDirection={"down"}
+                        pointerWidth={6 * itemScale}
+                        pointerHeight={4 * itemScale}
+                        lineJoin={"round"}
+                        shadowColor={"black"}
+                        shadowBlur={2 * itemScale}
+                        shadowOffsetX={1 * itemScale}
+                        shadowOffsetY={1 * itemScale}
+                        shadowOpacity={0.3}
+                        cornerRadius={3 * itemScale}
+                      />
+                      <Text
+                        text={`${det.label}${det.confidence ? ` (${(det.confidence * 100).toFixed(0)}%)` : ""}`}
+                        fontSize={10 * itemScale} // Slightly smaller for better fit in tag
+                        padding={3 * itemScale}
+                        fill={
+                          AI_COLORS[det.label] || AI_COLORS.detection_default
+                        }
+                      />
+                    </Label>
                   )}
                 </Group>
               ))}
+            {/* REMOVE THE ENTIRE BLOCK FOR aiAnnotations.segmentations */}
+            {/*
             {aiAnnotations.segmentations
               .filter((seg) => seg && seg.visible)
               .map((seg: SegmentationContour) => (
-                <Line
-                  key={seg.id}
-                  points={seg.points.flat()} // Konva Line expects flat array of numbers
-                  stroke={
-                    AI_COLORS[seg.label || ""] || AI_COLORS.segmentation_default
-                  }
-                  strokeWidth={2 * itemScale}
-                  closed={true}
-                  fill={(
-                    AI_COLORS[seg.label || ""] || AI_COLORS.segmentation_default
-                  )
-                    .replace("0.9", "0.3")
-                    .replace("0.7", "0.2")} // Lighter fill
-                  listening={false}
-                />
+                // ... segmentation rendering code ...
               ))}
+            */}
           </Group>
         </Layer>
 
+        {/* REMOVE THE ENTIRE LAYER FOR CLASSIFICATION OVERLAY */}
+        {/*
         <Layer name="classification-overlay-layer" listening={false}>
           {aiAnnotations.classifications
             .filter((cls) => cls && cls.visible)
             .map((cls: ClassificationPrediction) => {
-              const textContent = `${cls.label}${cls.confidence ? ": " + (cls.confidence * 100).toFixed(0) + "%" : ""}`;
-              if (!textContent || textContent.trim() === "") {
-                // console.warn(
-                //   "Skipping classification text render due to empty content:",
-                //   cls,
-                // );
-                return null;
-              }
-              const node = (
-                <Text
-                  key={cls.id}
-                  x={10} // Keep classification text relative to stage, not image group
-                  y={classificationTextYOffset} // Scale applied by stage
-                  text={textContent}
-                  fontSize={12} // Base font size, will be scaled by stage
-                  fill={
-                    AI_COLORS[cls.label] || AI_COLORS.classification_default
-                  }
-                  padding={5}
-                  background="rgba(0,0,0,0.6)"
-                  listening={false}
-                />
-              );
-              classificationTextYOffset += 18; // Increment for next classification text
-              return node;
+              // ... classification text rendering code ...
+              // classificationTextYOffset += 18; // This logic is also removed
             })}
         </Layer>
+        */}
       </Stage>
       {/* UI Panels - these will be positioned absolutely over the canvas */}
       {activeAnnotationTool === "freehand" && <FreehandOptionsPanel />}

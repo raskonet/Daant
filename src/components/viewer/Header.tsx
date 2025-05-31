@@ -1,23 +1,41 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Icons } from "../../components/ui/icons";
 import { Button } from "../../components/ui/button";
 import { Toggle } from "../../components/ui/toggle";
 import { useDicomStore } from "../../store/dicomStore";
 import { useToolStore } from "../../store/toolStore";
 import { downloadFile } from "../../lib/utils";
+import { exportModifiedDicom } from "../../services/api";
+import { DicomMeta } from "../../types";
+import { useShallow } from "zustand/react/shallow"; // Import useShallow
 
 export function Header() {
-  const dicomData = useDicomStore((state) => state.dicomData);
-  const currentDicomId = useDicomStore((state) => state.dicomData?.id);
+  const { dicomData, currentDicomId, dicomOriginalMeta } = useDicomStore(
+    useShallow((state) => ({
+      // Apply useShallow here
+      dicomData: state.dicomData,
+      currentDicomId: state.dicomData?.id,
+      dicomOriginalMeta: state.dicomData?.meta,
+    })),
+  );
   const resetDicomStore = useDicomStore((state) => state.resetState);
 
-  const undoLastAction = useToolStore((state) => state.undoLastAction);
-  const canUndo = useToolStore((state) => state.canUndo);
-  const getCanvasAsDataURL = useToolStore((state) => state.getCanvasAsDataURL);
-  const editedDicomMeta = useToolStore((state) => state.editedDicomMeta);
-  const resetAllToolRelatedStateGlobal = useToolStore(
-    (state) => state.resetAllToolRelatedState,
+  const {
+    undoLastAction,
+    canUndo,
+    getCanvasAsDataURL,
+    editedDicomMeta,
+    resetAllToolRelatedStateGlobal,
+  } = useToolStore(
+    useShallow((state) => ({
+      // Apply useShallow here
+      undoLastAction: state.undoLastAction,
+      canUndo: state.canUndo,
+      getCanvasAsDataURL: state.getCanvasAsDataURL,
+      editedDicomMeta: state.editedDicomMeta,
+      resetAllToolRelatedStateGlobal: state.resetAllToolRelatedState,
+    })),
   );
 
   const [fmxOn, setFmxOn] = useState(true);
@@ -98,26 +116,48 @@ export function Header() {
 
   const handleExportModifiedDicom = async () => {
     if (!currentDicomId) {
-      alert("No DICOM loaded.");
+      alert("No DICOM loaded to export.");
       return;
     }
-    // Check if editedDicomMeta has meaningful changes, not just an empty object or null
-    const hasEdits =
-      editedDicomMeta &&
-      Object.values(editedDicomMeta).some(
-        (val) => val !== undefined && val !== null && val !== "",
+    if (!editedDicomMeta) {
+      alert("Metadata editor has not been opened or initialized.");
+      return;
+    }
+
+    const changesToSend: Partial<DicomMeta> = {};
+    let hasActualChanges = false;
+
+    if (dicomOriginalMeta) {
+      for (const key in editedDicomMeta) {
+        const typedKey = key as keyof DicomMeta;
+        if (editedDicomMeta[typedKey] !== dicomOriginalMeta[typedKey]) {
+          changesToSend[typedKey] = editedDicomMeta[typedKey];
+          hasActualChanges = true;
+        }
+      }
+    } else {
+      Object.assign(changesToSend, editedDicomMeta);
+      hasActualChanges = Object.keys(changesToSend).length > 0;
+    }
+
+    if (!hasActualChanges) {
+      alert("No metadata changes detected to export.");
+      return;
+    }
+
+    try {
+      const blob = await exportModifiedDicom(currentDicomId, changesToSend);
+      downloadFile(
+        URL.createObjectURL(blob),
+        `${currentDicomId}_modified.dcm`,
+        "application/dicom",
       );
-
-    if (!hasEdits) {
-      alert("No metadata edits have been made to export, or edits are empty.");
-      return;
+    } catch (error) {
+      console.error("Error exporting modified DICOM:", error);
+      alert(
+        `Failed to export modified DICOM. ${error instanceof Error ? error.message : "An unknown error occurred."}`,
+      );
     }
-
-    alert(
-      "Exporting modified DICOM is a planned feature and not fully implemented. This would send edited metadata (and eventually pixel data) to the backend to generate a new DICOM file.",
-    );
-    console.log("Attempting to export modified DICOM for:", currentDicomId);
-    console.log("Edited Metadata to send:", editedDicomMeta);
   };
 
   let displayPatientName = "No Patient Loaded";
@@ -139,6 +179,16 @@ export function Header() {
   }
   const studyDateForDisplay = dicomData?.studyDate || "N/A";
   const isUndoPossible = canUndo();
+
+  const canExportModified =
+    currentDicomId &&
+    editedDicomMeta &&
+    dicomOriginalMeta &&
+    Object.keys(editedDicomMeta).some(
+      (key) =>
+        editedDicomMeta[key as keyof DicomMeta] !==
+        dicomOriginalMeta[key as keyof DicomMeta],
+    );
 
   return (
     <header className="bg-primary-dark text-text-primary h-16 flex items-center justify-between px-4 border-b border-border-dark shrink-0">
@@ -197,9 +247,6 @@ export function Header() {
                 title={`Upper ${i + 1}`}
                 aria-label={`Select upper tooth segment ${i + 1}`}
                 className={`w-3 h-5 ${i === 3 ? "bg-accent-blue" : "bg-gray-600"} hover:bg-gray-500 cursor-pointer focus:outline-none focus:ring-2 focus:ring-accent-blue`}
-                onClick={() =>
-                  console.log(`FMX Upper Segment ${i + 1} clicked`)
-                }
               ></button>
             ))}
             <div className="w-1"></div>
@@ -209,9 +256,6 @@ export function Header() {
                 title={`Lower ${i + 1}`}
                 aria-label={`Select lower tooth segment ${i + 1}`}
                 className={`w-3 h-5 bg-gray-600 hover:bg-gray-500 cursor-pointer focus:outline-none focus:ring-2 focus:ring-accent-blue`}
-                onClick={() =>
-                  console.log(`FMX Lower Segment ${i + 1} clicked`)
-                }
               ></button>
             ))}
           </div>
@@ -246,9 +290,9 @@ export function Header() {
           variant="outline"
           size="sm"
           onClick={handleExportModifiedDicom}
-          disabled={true}
-          title="Export DICOM with metadata changes (Feature in progress)"
-          className="opacity-50 cursor-not-allowed"
+          disabled={!canExportModified}
+          title="Export DICOM with metadata changes"
+          className={!canExportModified ? "opacity-50 cursor-not-allowed" : ""}
         >
           Mod. DICOM
         </Button>

@@ -14,4 +14,5 @@ Pillow
 # huggingface_hub
  pylibjpeg>=2.0
 pylibjpeg-libjpeg>=2.1
+inference-sdk
 # pylibjpeg-openjpeg

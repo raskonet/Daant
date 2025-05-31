@@ -119,10 +119,10 @@ const toolButtonsConfig: ToolConfig[] = [
     isActiveCheck: (store) => store.toolUIState.showCropInterface,
   },
   {
-    id: "metadata-editor", // NEW
-    icon: Icons.Settings2, // Or Icons.ListFilter or any other suitable icon
+    id: "metadata-editor",
+    icon: Icons.Settings2,
     label: "Edit Metadata",
-    action: (store) => store.toggleMetadataEditor(), // toggleMetadataEditor handles panel logic
+    action: (store) => store.toggleMetadataEditor(),
     isActiveCheck: (store) => store.toolUIState.showMetadataEditor,
   },
   {

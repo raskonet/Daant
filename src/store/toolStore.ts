@@ -1,36 +1,20 @@
 // src/store/toolStore.ts
 import { create } from "zustand";
-import { fetchAiAnalysis } from "../services/api";
+import { fetchAiAnalysis, fetchDiagnosticReport } from "../services/api"; // Added fetchDiagnosticReport
 import {
   AiAnalysisResult,
   AiStoreAnnotations,
   BoundingBox,
-  SegmentationContour,
-  ClassificationPrediction,
+  // SegmentationContour, // No longer used from Roboflow
+  // ClassificationPrediction, // No longer used from Roboflow
 } from "../types/ai";
 import { useDicomStore } from "./dicomStore";
-import { DicomMeta, Annotation as UserAnnotationType } from "../types"; // Assuming your Annotation type is also in ../types
+import { DicomMeta, Annotation as UserAnnotationType } from "../types";
 
 // --- Base Annotation Types (User-drawn) ---
 export type AnnotationType = "freehand" | "text" | "highlight" | "measurement";
 export type ActiveAnnotationTool = AnnotationType | null;
-
-// Re-exporting or using UserAnnotationType from your main types
 export type Annotation = UserAnnotationType;
-/*
-If Annotation is not in ../types, define it here:
-export interface Annotation {
-  id: string;
-  type: AnnotationType;
-  points?: number[];
-  text?: string;
-  position?: { x: number; y: number };
-  textPosition?: { x: number; y: number }; // For measurement text
-  color: string;
-  strokeWidth?: number;
-  fontSize?: number;
-}
-*/
 
 // --- Image Manipulation State Types ---
 export interface ImageFiltersState {
@@ -69,8 +53,7 @@ interface UndoableState {
   imageFilters: ImageFiltersState;
   imageTransformations: ImageTransformationsState;
   annotations: Annotation[];
-  // Consider adding editedDicomMeta here if its changes should be undoable
-  // editedDicomMeta: Partial<DicomMeta> | null;
+  // editedDicomMeta could be added here if its changes should be undoable
 }
 
 // --- Main ToolStore State Interface ---
@@ -87,14 +70,21 @@ export interface ToolState {
   getCanvasAsDataURL: (() => string | undefined) | null;
   getOriginalDicomBlob: (() => Blob | null) | null;
   undoStack: UndoableState[];
+
+  // AI Specific (Roboflow)
   aiAnnotations: AiStoreAnnotations;
-  isAiLoading: Record<"detection" | "segmentation" | "classification", boolean>;
+  // isAiLoading: Record<"detection" | "segmentation" | "classification", boolean>; // OLD
+  isAiLoading: Record<"detection", boolean>; // NEW - only detection from Roboflow
   aiError: string | null;
 
-  // NEW: Freehand drawing options
+  // LLM Report Specific
+  diagnosticReport: string | null;
+  isReportLoading: boolean;
+  reportError: string | null;
+
+  // Annotation style options
   freehandColor: string;
   freehandStrokeWidth: number;
-  // NEW: Text annotation options (can expand this)
   textAnnotationColor: string;
   textAnnotationFontSize: number;
 
@@ -130,17 +120,10 @@ export interface ToolState {
   setShowAnnotations: (show: boolean) => void;
   startCurrentDrawing: (point: { x: number; y: number }) => void;
   addPointToCurrentDrawing: (point: { x: number; y: number }) => void;
-  finishCurrentPathAnnotation: (
-    // Ensure this signature matches DicomCanvas call
-    type: Exclude<AnnotationType, "text">, // "freehand" | "highlight" | "measurement"
-    // Color and strokeWidth will be taken from store for freehand/highlight if not passed
-    // Or DicomCanvas can pass them explicitly using values from store
-  ) => void;
+  finishCurrentPathAnnotation: (type: Exclude<AnnotationType, "text">) => void;
   finishCurrentTextAnnotation: (
-    // Ensure this signature matches DicomCanvas call
     text: string,
     position: { x: number; y: number },
-    // Color and fontSize will be taken from store if not passed
   ) => void;
   setToolUIVisibility: <K extends keyof ToolUIState>(
     uiElement: K,
@@ -157,23 +140,21 @@ export interface ToolState {
   pushToUndoStack: () => void;
   undoLastAction: () => void;
   canUndo: () => boolean;
-  runAiAnalysis: (
-    modelType: "detection" | "segmentation" | "classification",
-  ) => Promise<void>;
+
+  runAiAnalysis: (modelType: "detection") => Promise<void>; // Only "detection" now
   setAiAnnotationVisibility: (
-    type: keyof AiStoreAnnotations,
+    type: "detections", // Only "detections"
     idOrLabel: string,
     visible: boolean,
   ) => void;
-  toggleAllAiVisibility: (
-    modelType: keyof AiStoreAnnotations,
-    visible: boolean,
-  ) => void;
+  toggleAllAiVisibility: (modelType: "detections", visible: boolean) => void; // Only "detections"
   clearAiAnnotations: () => void;
+
+  generateAndFetchReport: () => Promise<void>; // New LLM action
+
   resetAllFiltersAndTransforms: () => void;
   resetAllToolRelatedState: () => void;
 
-  // NEW: Actions for freehand/text options
   setFreehandColor: (color: string) => void;
   setFreehandStrokeWidth: (width: number) => void;
   setTextAnnotationColor: (color: string) => void;
@@ -202,15 +183,19 @@ export const initialToolUIState: ToolUIState = {
   showTextConfigPanel: false,
 };
 const initialUserAnnotations: Annotation[] = [];
+
+// AiStoreAnnotations now only meaningfully contains detections
 const initialAiAnnotations: AiStoreAnnotations = {
   detections: [],
-  segmentations: [],
-  classifications: [],
+  segmentations: [], // Will remain empty
+  classifications: [], // Will remain empty
 };
+
+// isAiLoading now only tracks detection
 const initialIsAiLoading = {
   detection: false,
-  segmentation: false,
-  classification: false,
+  // segmentation: false, // Removed
+  // classification: false, // Removed
 };
 
 const RELEVANT_METADATA_FIELDS_FOR_EDITING: Array<keyof DicomMeta> = [
@@ -240,117 +225,28 @@ export const useToolStore = create<ToolState>((set, get) => ({
   getCanvasAsDataURL: null,
   getOriginalDicomBlob: null,
   undoStack: [],
+
   aiAnnotations: { ...initialAiAnnotations },
   isAiLoading: { ...initialIsAiLoading },
   aiError: null,
 
-  // NEW initial values for drawing options
-  freehandColor: "#FFFF00", // Default yellow
+  diagnosticReport: null,
+  isReportLoading: false,
+  reportError: null,
+
+  freehandColor: "#FFFF00",
   freehandStrokeWidth: 2,
-  textAnnotationColor: "#00FF00", // Default green for text
+  textAnnotationColor: "#00FF00",
   textAnnotationFontSize: 16,
 
-  // ... (setImageFilter, toggleInvertFilter, resetImageFilters - same as before)
-  // ... (setImageTransformation, setSourceCrop, resetCrop, rotateImage90, resetImageTransformations - same as before)
-  // ... (setStageZoomAndPosition, zoomIn, zoomOut, resetZoom - same as before)
-  // ... (setActiveAnnotationTool, addAnnotation, updateAnnotation, clearAllAnnotations, setShowAnnotations - same as before)
-  // ... (startCurrentDrawing, addPointToCurrentDrawing - same as before)
-
-  // --- MODIFIED/ADDED Annotation Finishing Logic ---
-  finishCurrentPathAnnotation: (type) => {
-    const {
-      currentDrawingPoints,
-      addAnnotation,
-      freehandColor, // Get current freehand options from store
-      freehandStrokeWidth,
-    } = get();
-
-    // Determine color and strokeWidth based on type
-    let colorToUse: string;
-    let strokeWidthToUse: number;
-
-    switch (type) {
-      case "freehand":
-        colorToUse = freehandColor;
-        strokeWidthToUse = freehandStrokeWidth;
-        break;
-      case "highlight":
-        colorToUse = "rgba(255,255,0,0.3)"; // Default highlight
-        strokeWidthToUse = 20; // Default highlight
-        break;
-      case "measurement":
-        colorToUse = "#00FF00"; // Default measurement
-        strokeWidthToUse = 2;
-        break;
-      default: // Should not happen if type is constrained
-        colorToUse = "#FFFFFF";
-        strokeWidthToUse = 1;
-    }
-
-    if (currentDrawingPoints.length < (type === "measurement" ? 4 : 2)) {
-      set({ isDrawing: false, currentDrawingPoints: [] });
-      return;
-    }
-
-    const annotationData: Omit<Annotation, "id"> = {
-      type,
-      points: [...currentDrawingPoints],
-      color: colorToUse,
-      strokeWidth: strokeWidthToUse,
-    };
-
-    if (type === "measurement" && currentDrawingPoints.length >= 4) {
-      // For measurement, DicomCanvas will calculate and pass displayText and pixelSpacing
-      // This function's signature might need to accept them if DicomCanvas doesn't add them later
-      // For now, let's assume DicomCanvas handles measurement-specific text.
-      // If DicomCanvas already passes `displayText`, the signature was:
-      // finishCurrentPathAnnotation: (type, color, strokeWidth, pixelSpacing?, displayText?)
-      // We'll adapt to DicomCanvas calling it without explicit color/stroke for freehand.
-      // DicomCanvas could call: finishCurrentPathAnnotation("measurement", defaultColor, defaultStroke, ps, text)
-      // For now, keeping it simple, measurement logic is mostly in DicomCanvas for display text
-    }
-
-    addAnnotation(annotationData);
-    set({ isDrawing: false, currentDrawingPoints: [] });
-  },
-
-  finishCurrentTextAnnotation: (text, position) => {
-    const { addAnnotation, textAnnotationColor, textAnnotationFontSize } =
-      get();
-    addAnnotation({
-      type: "text",
-      text,
-      position,
-      color: textAnnotationColor,
-      fontSize: textAnnotationFontSize,
-    });
-    set({ isDrawing: false, currentDrawingPoints: [] }); // Also reset drawing state for text
-  },
-
-  // ... (setToolUIVisibility, toggleToolUIVisibility, toggleMetadataEditor - same as before)
-  // ... (initializeEditedMetadata, updateEditedMetadataField, clearEditedMetadata - same as before)
-  // ... (setCanvasExporter, setOriginalDicomDownloader - same as before)
-  // ... (pushToUndoStack, undoLastAction, canUndo - same as before)
-  // ... (AI functions: runAiAnalysis, etc. - same as before)
-  // ... (resetAllFiltersAndTransforms, resetAllToolRelatedState - same as before)
-
-  // NEW Actions for setting drawing options
-  setFreehandColor: (color) => set({ freehandColor: color }),
-  setFreehandStrokeWidth: (width) =>
-    set({ freehandStrokeWidth: Math.max(1, Math.min(width, 50)) }),
-  setTextAnnotationColor: (color) => set({ textAnnotationColor: color }),
-  setTextAnnotationFontSize: (size) =>
-    set({ textAnnotationFontSize: Math.max(8, Math.min(size, 72)) }),
-
-  // Implementations from your existing store (ensure they are all here)
   setImageFilter: (filter, value) => {
-    /* ... from your code ... */ get().pushToUndoStack();
+    get().pushToUndoStack();
     set((state) => ({
       imageFilters: { ...state.imageFilters, [filter]: value },
     }));
   },
   toggleInvertFilter: () => {
-    /* ... from your code ... */ get().pushToUndoStack();
+    get().pushToUndoStack();
     set((state) => ({
       imageFilters: {
         ...state.imageFilters,
@@ -359,7 +255,7 @@ export const useToolStore = create<ToolState>((set, get) => ({
     }));
   },
   resetImageFilters: () => {
-    /* ... from your code ... */ if (
+    if (
       JSON.stringify(get().imageFilters) !== JSON.stringify(initialImageFilters)
     ) {
       get().pushToUndoStack();
@@ -367,7 +263,7 @@ export const useToolStore = create<ToolState>((set, get) => ({
     set({ imageFilters: { ...initialImageFilters } });
   },
   setImageTransformation: (transformation, value) => {
-    /* ... from your code ... */ get().pushToUndoStack();
+    get().pushToUndoStack();
     set((state) => ({
       imageTransformations: {
         ...state.imageTransformations,
@@ -376,8 +272,7 @@ export const useToolStore = create<ToolState>((set, get) => ({
     }));
   },
   setSourceCrop: (crop) => {
-    /* ... from your code ... */ const currentSourceCrop =
-      get().imageTransformations.sourceCrop;
+    const currentSourceCrop = get().imageTransformations.sourceCrop;
     if (JSON.stringify(currentSourceCrop) !== JSON.stringify(crop)) {
       get().pushToUndoStack();
     }
@@ -386,9 +281,7 @@ export const useToolStore = create<ToolState>((set, get) => ({
     }));
   },
   resetCrop: () => {
-    /* ... from your code ... */ if (
-      get().imageTransformations.sourceCrop !== null
-    ) {
+    if (get().imageTransformations.sourceCrop !== null) {
       get().pushToUndoStack();
     }
     set((state) => ({
@@ -397,7 +290,7 @@ export const useToolStore = create<ToolState>((set, get) => ({
     }));
   },
   rotateImage90: () => {
-    /* ... from your code ... */ get().pushToUndoStack();
+    get().pushToUndoStack();
     set((state) => ({
       imageTransformations: {
         ...state.imageTransformations,
@@ -406,7 +299,7 @@ export const useToolStore = create<ToolState>((set, get) => ({
     }));
   },
   resetImageTransformations: () => {
-    /* ... from your code ... */ if (
+    if (
       JSON.stringify(get().imageTransformations) !==
       JSON.stringify(initialTransformations)
     ) {
@@ -415,36 +308,26 @@ export const useToolStore = create<ToolState>((set, get) => ({
     set({ imageTransformations: { ...initialTransformations } });
   },
   setStageZoomAndPosition: (scale, position) => {
-    /* ... from your code ... */ const current = get().imageTransformations;
-    if (
-      current.scale !== scale ||
-      current.position.x !== position.x ||
-      current.position.y !== position.y
-    ) {
-      get().pushToUndoStack();
-    }
     set((state) => ({
       imageTransformations: { ...state.imageTransformations, scale, position },
     }));
   },
   zoomIn: () => {
-    /* ... from your code ... */ const currentScale =
-      get().imageTransformations.scale;
-    const newScale = Math.min(currentScale * 1.2, 2);
+    const currentScale = get().imageTransformations.scale;
+    const newScale = Math.min(currentScale * 1.2, 10);
     if (currentScale !== newScale) {
       get().setImageTransformation("scale", newScale);
     }
   },
   zoomOut: () => {
-    /* ... from your code ... */ const currentScale =
-      get().imageTransformations.scale;
+    const currentScale = get().imageTransformations.scale;
     const newScale = Math.max(currentScale / 1.2, 0.1);
     if (currentScale !== newScale) {
       get().setImageTransformation("scale", newScale);
     }
   },
   resetZoom: () => {
-    /* ... from your code ... */ const current = get().imageTransformations;
+    const current = get().imageTransformations;
     if (
       current.scale !== 1 ||
       current.position.x !== 0 ||
@@ -472,37 +355,23 @@ export const useToolStore = create<ToolState>((set, get) => ({
         newToolUIState.showMetadataEditor = false;
       }
       newToolUIState.showTextConfigPanel = newActiveTool === "text";
-
       return {
         activeAnnotationTool: newActiveTool,
-        isDrawing: false, // Reset drawing state when changing tools
+        isDrawing: false,
         currentDrawingPoints: [],
         toolUIState: newToolUIState,
       };
     });
   },
-
-  toggleTextConfigPanel: (show) => {
-    set((state) => ({
-      toolUIState: {
-        ...state.toolUIState,
-        showTextConfigPanel:
-          typeof show === "boolean"
-            ? show
-            : !state.toolUIState.showTextConfigPanel,
-      },
-    }));
-  },
-
   addAnnotation: (annotationData) => {
-    /* ... from your code ... */ get().pushToUndoStack();
+    get().pushToUndoStack();
     const newId = crypto.randomUUID();
     const newAnnotation = { ...annotationData, id: newId };
     set((state) => ({ annotations: [...state.annotations, newAnnotation] }));
     return newId;
   },
   updateAnnotation: (id, updates) => {
-    /* ... from your code ... */ get().pushToUndoStack();
+    get().pushToUndoStack();
     set((state) => ({
       annotations: state.annotations.map((ann) =>
         ann.id === id ? { ...ann, ...updates } : ann,
@@ -510,32 +379,84 @@ export const useToolStore = create<ToolState>((set, get) => ({
     }));
   },
   clearAllAnnotations: () => {
-    /* ... from your code ... */ if (get().annotations.length > 0)
+    if (get().annotations.length > 0) {
       get().pushToUndoStack();
+    }
     set({ annotations: [] });
   },
   setShowAnnotations: (show) => {
-    /* ... from your code ... */ set({ showAnnotations: show });
+    set({ showAnnotations: show });
   },
   startCurrentDrawing: (point) => {
-    /* ... from your code ... */ set({
+    set({
       isDrawing: true,
       currentDrawingPoints: [point.x, point.y],
     });
   },
   addPointToCurrentDrawing: (point) => {
-    /* ... from your code ... */ if (!get().isDrawing) return;
+    if (!get().isDrawing) return;
     set((state) => ({
       currentDrawingPoints: [...state.currentDrawingPoints, point.x, point.y],
     }));
   },
+  finishCurrentPathAnnotation: (type) => {
+    const {
+      currentDrawingPoints,
+      addAnnotation,
+      freehandColor,
+      freehandStrokeWidth,
+    } = get();
+    let colorToUse: string;
+    let strokeWidthToUse: number;
+    switch (type) {
+      case "freehand":
+        colorToUse = freehandColor;
+        strokeWidthToUse = freehandStrokeWidth;
+        break;
+      case "highlight":
+        colorToUse = "rgba(255,255,0,0.3)";
+        strokeWidthToUse = 20;
+        break;
+      case "measurement":
+        colorToUse = "#00FF00";
+        strokeWidthToUse = 2;
+        break;
+      default:
+        colorToUse = "#FFFFFF";
+        strokeWidthToUse = 1;
+    }
+    if (currentDrawingPoints.length < (type === "measurement" ? 4 : 2)) {
+      set({ isDrawing: false, currentDrawingPoints: [] });
+      return;
+    }
+    const annotationData: Omit<Annotation, "id"> = {
+      type,
+      points: [...currentDrawingPoints],
+      color: colorToUse,
+      strokeWidth: strokeWidthToUse,
+    };
+    addAnnotation(annotationData);
+    set({ isDrawing: false, currentDrawingPoints: [] });
+  },
+  finishCurrentTextAnnotation: (text, position) => {
+    const { addAnnotation, textAnnotationColor, textAnnotationFontSize } =
+      get();
+    addAnnotation({
+      type: "text",
+      text,
+      position,
+      color: textAnnotationColor,
+      fontSize: textAnnotationFontSize,
+    });
+    set({ isDrawing: false, currentDrawingPoints: [] });
+  },
   setToolUIVisibility: (uiElement, visible) => {
-    /* ... from your code ... */ set((state) => ({
+    set((state) => ({
       toolUIState: { ...state.toolUIState, [uiElement]: visible },
     }));
   },
   toggleToolUIVisibility: (uiElement) => {
-    /* ... from your code ... */ set((state) => ({
+    set((state) => ({
       toolUIState: {
         ...state.toolUIState,
         [uiElement]: !state.toolUIState[uiElement],
@@ -543,20 +464,18 @@ export const useToolStore = create<ToolState>((set, get) => ({
     }));
   },
   toggleMetadataEditor: () => {
-    /* ... from your code, ensure it uses set properly ... */
     set((state) => {
       const currentlyShowing = state.toolUIState.showMetadataEditor;
       const newShowEditorState = !currentlyShowing;
       let newEditedMeta = state.editedDicomMeta;
       let newActiveAnnotationTool = state.activeAnnotationTool;
       const newToolUIState = { ...state.toolUIState };
-
       if (newShowEditorState) {
         Object.keys(newToolUIState).forEach((k) => {
           const key = k as keyof ToolUIState;
-          if (key !== "showMetadataEditor" && newToolUIState[key])
-            newToolUIState[key] = false;
+          if (key !== "showMetadataEditor") newToolUIState[key] = false;
         });
+        newActiveAnnotationTool = null;
         const originalMetaFromDicomStore =
           useDicomStore.getState().dicomData?.meta || null;
         if (originalMetaFromDicomStore) {
@@ -571,7 +490,6 @@ export const useToolStore = create<ToolState>((set, get) => ({
         } else {
           newEditedMeta = null;
         }
-        newActiveAnnotationTool = null;
       }
       newToolUIState.showMetadataEditor = newShowEditorState;
       return {
@@ -581,8 +499,19 @@ export const useToolStore = create<ToolState>((set, get) => ({
       };
     });
   },
+  toggleTextConfigPanel: (show) => {
+    set((state) => ({
+      toolUIState: {
+        ...state.toolUIState,
+        showTextConfigPanel:
+          typeof show === "boolean"
+            ? show
+            : !state.toolUIState.showTextConfigPanel,
+      },
+    }));
+  },
   initializeEditedMetadata: (originalMeta) => {
-    /* ... from your code ... */ if (originalMeta) {
+    if (originalMeta) {
       const initialEdits: Partial<DicomMeta> = {};
       RELEVANT_METADATA_FIELDS_FOR_EDITING.forEach((key) => {
         if (originalMeta[key] !== undefined) {
@@ -595,16 +524,23 @@ export const useToolStore = create<ToolState>((set, get) => ({
     }
   },
   updateEditedMetadataField: (field, value) => {
-    /* ... from your code ... */ set((state) => {
+    set((state) => {
       if (!state.editedDicomMeta) return {};
       let processedValue = value;
-      const originalMeta = useDicomStore.getState().dicomData?.meta;
-      if (originalMeta && typeof originalMeta[field] === "number") {
-        if (value === "" || value === null) {
+      const originalMetaValue =
+        useDicomStore.getState().dicomData?.meta?.[field];
+      if (
+        typeof originalMetaValue === "number" ||
+        field === "window_center" ||
+        field === "window_width"
+      ) {
+        if (value === "" || value === null || value === undefined) {
           processedValue = null;
         } else {
           const num = parseFloat(value);
-          processedValue = isNaN(num) ? originalMeta[field] : num;
+          processedValue = isNaN(num)
+            ? (state.editedDicomMeta[field] ?? null)
+            : num;
         }
       }
       return {
@@ -613,23 +549,22 @@ export const useToolStore = create<ToolState>((set, get) => ({
     });
   },
   clearEditedMetadata: () => {
-    /* ... from your code ... */ set({ editedDicomMeta: null });
+    set({ editedDicomMeta: null });
   },
   setCanvasExporter: (exporter) => {
-    /* ... from your code ... */ set({ getCanvasAsDataURL: exporter });
+    set({ getCanvasAsDataURL: exporter });
   },
   setOriginalDicomDownloader: (downloader) => {
-    /* ... from your code ... */ set({ getOriginalDicomBlob: downloader });
+    set({ getOriginalDicomBlob: downloader });
   },
   pushToUndoStack: () => {
-    /* ... from your code ... */ const currentState =
-      getCurrentUndoableState(get);
+    const currentState = getCurrentUndoableState(get);
     set((state) => ({
       undoStack: [...state.undoStack.slice(-19), currentState],
     }));
   },
   undoLastAction: () => {
-    /* ... from your code ... */ const stack = get().undoStack;
+    const stack = get().undoStack;
     if (stack.length > 0) {
       const prevState = stack[stack.length - 1];
       set({
@@ -644,21 +579,28 @@ export const useToolStore = create<ToolState>((set, get) => ({
     }
   },
   canUndo: () => {
-    /* ... from your code ... */ return get().undoStack.length > 0;
+    return get().undoStack.length > 0;
   },
+
   runAiAnalysis: async (modelType) => {
-    /* ... from your code ... */ const dicomId =
-      useDicomStore.getState().dicomData?.id;
+    // modelType will only be "detection"
+    const dicomId = useDicomStore.getState().dicomData?.id;
     if (!dicomId) {
       set({ aiError: "No DICOM image loaded to analyze." });
       return;
     }
     set((state) => ({
-      isAiLoading: { ...state.isAiLoading, [modelType]: true },
-      aiError:
-        state.aiError && state.aiError.includes(`AI for ${modelType}`)
-          ? null
-          : state.aiError,
+      isAiLoading: { detection: true }, // Only detection loading
+      aiError: null, // Clear general AI error
+      diagnosticReport: null, // Clear previous report
+      isReportLoading: false,
+      reportError: null,
+      aiAnnotations: {
+        // Clear all previous AI results
+        detections: [],
+        segmentations: [],
+        classifications: [],
+      },
     }));
     try {
       const result: AiAnalysisResult = await fetchAiAnalysis(
@@ -666,32 +608,21 @@ export const useToolStore = create<ToolState>((set, get) => ({
         modelType,
       );
       set((state) => {
-        const newAiAnnotations = { ...state.aiAnnotations };
-        if (modelType === "detection" && result.detection) {
+        const newAiAnnotations: AiStoreAnnotations = {
+          detections: [],
+          segmentations: [], // Keep empty
+          classifications: [], // Keep empty
+        };
+        if (modelType === "detection" && result.detection?.boxes) {
           newAiAnnotations.detections = result.detection.boxes.map((box) => ({
             ...box,
             id: crypto.randomUUID(),
             visible: true,
           }));
-        } else if (modelType === "segmentation" && result.segmentation) {
-          newAiAnnotations.segmentations = result.segmentation.contours.map(
-            (contour) => ({
-              ...contour,
-              id: crypto.randomUUID(),
-              visible: true,
-            }),
-          );
-        } else if (modelType === "classification" && result.classification) {
-          newAiAnnotations.classifications =
-            result.classification.predictions.map((pred) => ({
-              ...pred,
-              id: crypto.randomUUID(),
-              visible: true,
-            }));
         }
         return {
           aiAnnotations: newAiAnnotations,
-          isAiLoading: { ...state.isAiLoading, [modelType]: false },
+          isAiLoading: { detection: false },
         };
       });
     } catch (error: unknown) {
@@ -706,18 +637,19 @@ export const useToolStore = create<ToolState>((set, get) => ({
         const axiosError = error as {
           response?: { data?: { detail?: string } };
         };
-        if (axiosError.response?.data?.detail) {
+        if (axiosError.response?.data?.detail)
           errorDetails = axiosError.response.data.detail;
-        }
       } else if (typeof error === "string") errorDetails = error;
-      set((state) => ({
+      set({
         aiError: `AI for ${modelType} failed. Details: ${errorDetails}`,
-        isAiLoading: { ...state.isAiLoading, [modelType]: false },
-      }));
+        isAiLoading: { detection: false },
+      });
     }
   },
+
   setAiAnnotationVisibility: (type, idOrLabel, visible) => {
-    /* ... from your code ... */ set((state) => {
+    // type will only be "detections"
+    set((state) => {
       const newAiAnnotations = { ...state.aiAnnotations };
       if (type === "detections") {
         newAiAnnotations.detections = state.aiAnnotations.detections.map(
@@ -726,55 +658,75 @@ export const useToolStore = create<ToolState>((set, get) => ({
               ? { ...item, visible }
               : item,
         );
-      } else if (type === "segmentations") {
-        newAiAnnotations.segmentations = state.aiAnnotations.segmentations.map(
-          (item: SegmentationContour): SegmentationContour =>
-            item.id === idOrLabel || (item.label && item.label === idOrLabel)
-              ? { ...item, visible }
-              : item,
-        );
-      } else if (type === "classifications") {
-        newAiAnnotations.classifications =
-          state.aiAnnotations.classifications.map(
-            (item: ClassificationPrediction): ClassificationPrediction =>
-              item.id === idOrLabel || (item.label && item.label === idOrLabel)
-                ? { ...item, visible }
-                : item,
-          );
       }
+      // No need to handle segmentation or classification as they are not used
       return { aiAnnotations: newAiAnnotations };
     });
   },
+
   toggleAllAiVisibility: (modelType, visible) => {
-    /* ... from your code ... */ set((state) => {
+    // modelType will only be "detections"
+    set((state) => {
       const newAiAnns = { ...state.aiAnnotations };
-      if (modelType === "detections")
+      if (modelType === "detections") {
         newAiAnns.detections = newAiAnns.detections.map((d) => ({
           ...d,
           visible,
         }));
-      else if (modelType === "segmentations")
-        newAiAnns.segmentations = newAiAnns.segmentations.map((s) => ({
-          ...s,
-          visible,
-        }));
-      else if (modelType === "classifications")
-        newAiAnns.classifications = newAiAnns.classifications.map((c) => ({
-          ...c,
-          visible,
-        }));
+      }
+      // No need to handle segmentation or classification
       return { aiAnnotations: newAiAnns };
     });
   },
+
   clearAiAnnotations: () => {
-    /* ... from your code ... */ set({
-      aiAnnotations: { ...initialAiAnnotations },
+    set({
+      aiAnnotations: { ...initialAiAnnotations }, // Resets detections to empty, others already empty
       isAiLoading: { ...initialIsAiLoading },
       aiError: null,
+      // Also clear report when AI annotations are cleared
+      diagnosticReport: null,
+      isReportLoading: false,
+      reportError: null,
     });
   },
+
+  generateAndFetchReport: async () => {
+    const dicomId = useDicomStore.getState().dicomData?.id;
+    const currentAiDetections = get().aiAnnotations.detections;
+
+    if (!dicomId) {
+      set({
+        reportError: "DICOM ID not found. Cannot generate report.",
+        isReportLoading: false,
+      });
+      return;
+    }
+
+    set({ isReportLoading: true, reportError: null, diagnosticReport: null });
+
+    try {
+      const reportText = await fetchDiagnosticReport(
+        dicomId,
+        currentAiDetections,
+      );
+      set({ diagnosticReport: reportText, isReportLoading: false });
+    } catch (error: any) {
+      console.error("Error fetching diagnostic report:", error);
+      const errorMessage =
+        error.response?.data?.detail ||
+        error.message ||
+        "Failed to generate diagnostic report.";
+      set({
+        reportError: errorMessage,
+        isReportLoading: false,
+        diagnosticReport: null,
+      });
+    }
+  },
+
   resetAllFiltersAndTransforms: () => {
-    /* ... from your code ... */ const currentFilters = get().imageFilters;
+    const currentFilters = get().imageFilters;
     const currentTransforms = get().imageTransformations;
     if (
       JSON.stringify(currentFilters) !== JSON.stringify(initialImageFilters) ||
@@ -789,7 +741,7 @@ export const useToolStore = create<ToolState>((set, get) => ({
     });
   },
   resetAllToolRelatedState: () => {
-    /* ... from your code ... */ set({
+    set({
       imageFilters: { ...initialImageFilters },
       imageTransformations: { ...initialTransformations },
       annotations: [...initialUserAnnotations],
@@ -803,8 +755,22 @@ export const useToolStore = create<ToolState>((set, get) => ({
       aiAnnotations: { ...initialAiAnnotations },
       isAiLoading: { ...initialIsAiLoading },
       aiError: null,
+      diagnosticReport: null,
+      isReportLoading: false,
+      reportError: null,
+      freehandColor: "#FFFF00",
+      freehandStrokeWidth: 2,
+      textAnnotationColor: "#00FF00",
+      textAnnotationFontSize: 16,
     });
   },
+
+  setFreehandColor: (color) => set({ freehandColor: color }),
+  setFreehandStrokeWidth: (width) =>
+    set({ freehandStrokeWidth: Math.max(1, Math.min(width, 50)) }),
+  setTextAnnotationColor: (color) => set({ textAnnotationColor: color }),
+  setTextAnnotationFontSize: (size) =>
+    set({ textAnnotationFontSize: Math.max(8, Math.min(size, 72)) }),
 }));
 
 export const mapBrightnessToKonva = (uiBrightness: number): number =>
