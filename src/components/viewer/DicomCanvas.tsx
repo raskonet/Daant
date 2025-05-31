@@ -1288,9 +1288,7 @@ export function DicomCanvas() {
       {toolUIState.showBrightnessContrastPanel && <BrightnessContrastPanel />}
       {toolUIState.showCropInterface && <CropControlPanel />}{" "}
       {/* Placeholder if you create a separate component */}
-      {(isAiLoading.detection ||
-        isAiLoading.segmentation ||
-        isAiLoading.classification) && (
+      {isAiLoading.detection && (
         <div className="absolute inset-0 bg-black bg-opacity-60 flex items-center justify-center z-30 pointer-events-none">
           <div className="flex flex-col items-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent-blue mb-4"></div>
@@ -1298,6 +1296,7 @@ export function DicomCanvas() {
           </div>
         </div>
       )}
+      {/* --- END CORRECTION --- */}
     </div>
   );
 }

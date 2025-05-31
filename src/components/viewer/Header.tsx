@@ -8,12 +8,11 @@ import { useToolStore } from "../../store/toolStore";
 import { downloadFile } from "../../lib/utils";
 import { exportModifiedDicom } from "../../services/api";
 import { DicomMeta } from "../../types";
-import { useShallow } from "zustand/react/shallow"; // Import useShallow
+import { useShallow } from "zustand/react/shallow";
 
 export function Header() {
   const { dicomData, currentDicomId, dicomOriginalMeta } = useDicomStore(
     useShallow((state) => ({
-      // Apply useShallow here
       dicomData: state.dicomData,
       currentDicomId: state.dicomData?.id,
       dicomOriginalMeta: state.dicomData?.meta,
@@ -25,11 +24,10 @@ export function Header() {
     undoLastAction,
     canUndo,
     getCanvasAsDataURL,
-    editedDicomMeta,
+    editedDicomMeta, // Type is now SafePartialDicomMeta | null
     resetAllToolRelatedStateGlobal,
   } = useToolStore(
     useShallow((state) => ({
-      // Apply useShallow here
       undoLastAction: state.undoLastAction,
       canUndo: state.canUndo,
       getCanvasAsDataURL: state.getCanvasAsDataURL,
@@ -120,24 +118,41 @@ export function Header() {
       return;
     }
     if (!editedDicomMeta) {
-      alert("Metadata editor has not been opened or initialized.");
+      alert(
+        "Metadata editor has not been opened or initialized, or no changes made.",
+      );
+      return;
+    }
+    if (!dicomOriginalMeta) {
+      alert(
+        "Original DICOM metadata not available for comparison. Cannot determine precise changes.",
+      );
       return;
     }
 
-    const changesToSend: Partial<DicomMeta> = {};
+    const changesToSend: Partial<DicomMeta> = {}; // Still use Partial<DicomMeta> for the payload
     let hasActualChanges = false;
 
-    if (dicomOriginalMeta) {
-      for (const key in editedDicomMeta) {
+    for (const key in editedDicomMeta) {
+      if (Object.prototype.hasOwnProperty.call(editedDicomMeta, key)) {
         const typedKey = key as keyof DicomMeta;
-        if (editedDicomMeta[typedKey] !== dicomOriginalMeta[typedKey]) {
-          changesToSend[typedKey] = editedDicomMeta[typedKey];
+
+        const editedValue = editedDicomMeta[typedKey]; // From SafePartialDicomMeta, so strings are "" or string, not null
+        const originalValue = dicomOriginalMeta[typedKey];
+
+        if (editedValue !== originalValue) {
+          // Now, editedValue should be string, "", number, [number,number], null (for nullable number fields), or undefined.
+          // This assignment should be fine for Partial<DicomMeta> as long as undefined values are handled by JSON stringifier (usually stripped)
+          // and backend handles missing keys as "no change".
+          // The problematic "null not assignable to undefined" for string fields should be gone
+          // because editedValue for string fields will be "" or a string from the store.
+          if (typeof editedValue !== "undefined") {
+            // Only include defined values in changesToSend
+            (changesToSend as any)[typedKey] = editedValue; // Use `as any` to bypass if TS still struggles with exact unions
+          }
           hasActualChanges = true;
         }
       }
-    } else {
-      Object.assign(changesToSend, editedDicomMeta);
-      hasActualChanges = Object.keys(changesToSend).length > 0;
     }
 
     if (!hasActualChanges) {
@@ -184,11 +199,28 @@ export function Header() {
     currentDicomId &&
     editedDicomMeta &&
     dicomOriginalMeta &&
-    Object.keys(editedDicomMeta).some(
-      (key) =>
-        editedDicomMeta[key as keyof DicomMeta] !==
-        dicomOriginalMeta[key as keyof DicomMeta],
-    );
+    Object.keys(editedDicomMeta).some((key) => {
+      const metaKey = key as keyof DicomMeta;
+      let currentEditedValue = editedDicomMeta[metaKey]; // from SafePartialDicomMeta
+      const currentOriginalValue = dicomOriginalMeta[metaKey];
+
+      // Consistent comparison logic
+      if (
+        currentEditedValue === null &&
+        (metaKey === "patient_id" ||
+          metaKey === "study_date" ||
+          metaKey === "modality")
+      ) {
+        // This case should not happen if store sets "" for these fields when null
+        // But for safety in comparison:
+        currentEditedValue = "";
+      }
+
+      return (
+        Object.prototype.hasOwnProperty.call(dicomOriginalMeta, metaKey) &&
+        currentEditedValue !== currentOriginalValue
+      );
+    });
 
   return (
     <header className="bg-primary-dark text-text-primary h-16 flex items-center justify-between px-4 border-b border-border-dark shrink-0">

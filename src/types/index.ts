@@ -1,4 +1,5 @@
-//backend related
+// src/types/index.ts
+
 export interface DicomMeta {
   patient_id: string;
   study_date: string;
@@ -11,15 +12,27 @@ export interface DicomMeta {
 }
 
 export interface ImagePayload {
-  png_data: string; // base64 encoded PNG
+  png_data: string;
   meta: DicomMeta;
 }
 
-// Frontend only
 export interface DicomData {
   id: string;
   patientName: string;
   studyDate: string;
   pngDataUrl: string;
   meta: DicomMeta;
+}
+
+export type AnnotationType = "freehand" | "text" | "highlight" | "measurement";
+
+export interface Annotation {
+  id: string;
+  type: AnnotationType;
+  points?: number[];
+  text?: string;
+  position?: { x: number; y: number };
+  color: string;
+  strokeWidth?: number;
+  fontSize?: number;
 }

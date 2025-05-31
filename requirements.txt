@@ -1,18 +1,21 @@
-fastapi==0.104.1
-mangum==0.17.0
-python-multipart==0.0.6
-# uvicorn[standard] 
-pydantic
-pydantic-settings
-# python-multipart
-pydicom
-numpy
-Pillow
- opencv-python-headless 
-# tensorflow 
-# ultralytics
-# huggingface_hub
- pylibjpeg>=2.0
-pylibjpeg-libjpeg>=2.1
-inference-sdk
-# pylibjpeg-openjpeg
+    fastapi==0.104.1
+
+    mangum==0.17.0 
+
+    python-multipart==0.0.6
+
+    pydantic
+
+    pydantic-settings
+
+    pydicom
+
+    numpy
+
+    Pillow
+
+    inference-sdk 
+
+    pylibjpeg>=2.0
+
+    pylibjpeg-libjpeg>=2.1

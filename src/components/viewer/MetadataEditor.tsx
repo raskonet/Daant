@@ -1,25 +1,30 @@
-// src/components/viewer/MetadataEditor.tsx
 "use client";
 import React from "react";
 import { useDicomStore } from "../../store/dicomStore";
 import { useToolStore } from "../../store/toolStore";
 import { DicomMeta } from "../../types";
-import { Button } from "../ui/button"; // Assuming you have this
-import { Icons } from "../ui/icons"; // Assuming you have this
+import { Button } from "../ui/button";
+import { Icons } from "../ui/icons";
 
 // Define which fields are editable and their display names/types
 const EDITABLE_METADATA_CONFIG: Array<{
   key: keyof DicomMeta;
   label: string;
-  type: "text" | "number" | "date";
+  type: "text" | "number" | "date" | "pixel_spacing"; // Added "pixel_spacing" type
 }> = [
   { key: "patient_id", label: "Patient ID", type: "text" },
-  { key: "study_date", label: "Study Date (YYYYMMDD)", type: "text" }, // Or use a date picker component
+  { key: "study_date", label: "Study Date (YYYYMMDD)", type: "text" },
   { key: "modality", label: "Modality", type: "text" },
   { key: "window_center", label: "Window Center", type: "number" },
   { key: "window_width", label: "Window Width", type: "number" },
-  // Add more fields as needed, e.g., PatientName, PatientSex, StudyDescription, etc.
-  // Be careful with complex types like pixel_spacing (array)
+  {
+    key: "pixel_spacing",
+    label: "Pixel Spacing (e.g., 0.5,0.5)",
+    type: "pixel_spacing",
+  },
+  // Add 'rows', 'columns' here if they are user-editable and part of RELEVANT_METADATA_FIELDS_FOR_EDITING in store
+  // { key: "rows", label: "Rows", type: "number" },
+  // { key: "columns", label: "Columns", type: "number" },
 ];
 
 export function MetadataEditor() {
@@ -28,7 +33,7 @@ export function MetadataEditor() {
     editedDicomMeta,
     updateEditedMetadataField,
     initializeEditedMetadata,
-    toggleMetadataEditor, // To close the editor
+    toggleMetadataEditor,
   } = useToolStore();
 
   if (!dicomData || !dicomData.meta || !editedDicomMeta) {
@@ -42,7 +47,7 @@ export function MetadataEditor() {
             onClick={toggleMetadataEditor}
             className="text-text-secondary"
           >
-            <Icons.ChevronLeft size={18} /> {/* Or a close icon */}
+            <Icons.ChevronLeft size={18} />
           </Button>
         </div>
         <p className="text-xs text-text-secondary">
@@ -54,22 +59,53 @@ export function MetadataEditor() {
 
   const originalMeta = dicomData.meta;
 
-  const handleChange = (fieldKey: keyof DicomMeta, value: string) => {
+  const handleChange = (fieldKey: keyof DicomMeta, inputValue: string) => {
     const config = EDITABLE_METADATA_CONFIG.find((f) => f.key === fieldKey);
-    let processedValue: string | number | null | (string | number)[] = value;
+
+    // This is the type expected by the store's updateEditedMetadataField action
+    let valueForStore: string | number | null | [number, number];
 
     if (config?.type === "number") {
-      if (value === "") {
-        processedValue = null; // Allow clearing number fields
+      if (inputValue === "") {
+        valueForStore = null;
       } else {
-        const num = parseFloat(value);
-        processedValue = isNaN(num)
-          ? (editedDicomMeta?.[fieldKey] ?? null)
-          : num; // Keep current if invalid
+        const num = parseFloat(inputValue);
+        // If parsing fails, keep the existing valid value from the store or null
+        valueForStore = isNaN(num)
+          ? ((editedDicomMeta?.[fieldKey] as number | null) ?? null)
+          : num;
       }
+    } else if (
+      config?.type === "pixel_spacing" &&
+      fieldKey === "pixel_spacing"
+    ) {
+      const parts = inputValue
+        .split(",")
+        .map((part) => parseFloat(part.trim()));
+      if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+        valueForStore = [parts[0], parts[1]]; // Assign as [number, number]
+      } else {
+        // If input string is not a valid "num,num" format,
+        // fall back to the current value in the store or a default valid tuple.
+        const currentStoreValue = editedDicomMeta?.[fieldKey];
+        if (
+          Array.isArray(currentStoreValue) &&
+          currentStoreValue.length === 2 &&
+          typeof currentStoreValue[0] === "number" &&
+          typeof currentStoreValue[1] === "number"
+        ) {
+          valueForStore = currentStoreValue as [number, number];
+        } else {
+          valueForStore = [0, 0]; // Fallback default if current is also bad or undefined
+        }
+      }
+    } else {
+      // "text", "date" (as text), or other unhandled DicomMeta fields
+      valueForStore = inputValue; // Assign as string
     }
-    // Add more specific processing for dates or other types if needed
-    updateEditedMetadataField(fieldKey, processedValue);
+
+    // Line 72 (or around there depending on exact line numbers)
+    updateEditedMetadataField(fieldKey, valueForStore);
   };
 
   const handleResetToOriginal = () => {
@@ -86,7 +122,7 @@ export function MetadataEditor() {
           onClick={toggleMetadataEditor}
           className="text-text-secondary"
         >
-          <Icons.ChevronLeft size={18} /> {/* Or a close icon X */}
+          <Icons.ChevronLeft size={18} />
         </Button>
       </div>
       <div className="flex-grow overflow-y-auto space-y-3 pr-1">
@@ -99,13 +135,13 @@ export function MetadataEditor() {
               {label}
             </label>
             <input
-              type={type === "number" ? "number" : "text"}
+              type={type === "number" ? "number" : "text"} // Input type remains text for pixel_spacing
               id={`meta-${key}`}
               value={
                 editedDicomMeta[key] === null ||
                 editedDicomMeta[key] === undefined
                   ? ""
-                  : String(editedDicomMeta[key])
+                  : String(editedDicomMeta[key]) // Converts [0.1, 0.2] to "0.1,0.2" for display
               }
               onChange={(e) => handleChange(key, e.target.value)}
               className="mt-0.5 block w-full px-2 py-1.5 bg-secondary-dark border border-border-dark rounded-md shadow-sm focus:outline-none focus:ring-accent-blue focus:border-accent-blue sm:text-xs"
@@ -128,10 +164,6 @@ export function MetadataEditor() {
         >
           Reset to Original Values
         </Button>
-        {/* "Apply" button might be for saving to a more permanent pending state if needed,
-            or this editor directly modifies the `editedDicomMeta` used for export.
-            For now, changes are live in `editedDicomMeta`.
-        */}
       </div>
     </div>
   );

@@ -1,4 +1,3 @@
-// src/components/viewer/RightPanel.tsx
 import React from "react";
 import { ImageToolsBar } from "./ImageToolsBar";
 import { AiViewerControls } from "./AiViewerControls";
@@ -13,7 +12,6 @@ export function RightPanel() {
 
   return (
     <TooltipProvider delayDuration={100}>
-      {/* Adjust width if metadata editor is a third column or replaces AI panel */}
       <aside className="flex">
         <ImageToolsBar />
         {showMetadataEditor ? ( // NEW: Conditional rendering

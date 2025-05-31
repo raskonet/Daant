@@ -1,22 +1,14 @@
 // src/store/toolStore.ts
 import { create } from "zustand";
-import { fetchAiAnalysis, fetchDiagnosticReport } from "../services/api"; // Added fetchDiagnosticReport
-import {
-  AiAnalysisResult,
-  AiStoreAnnotations,
-  BoundingBox,
-  // SegmentationContour, // No longer used from Roboflow
-  // ClassificationPrediction, // No longer used from Roboflow
-} from "../types/ai";
+import { fetchAiAnalysis, fetchDiagnosticReport } from "../services/api";
+import { AiAnalysisResult, AiStoreAnnotations, BoundingBox } from "../types/ai";
 import { useDicomStore } from "./dicomStore";
 import { DicomMeta, Annotation as UserAnnotationType } from "../types";
 
-// --- Base Annotation Types (User-drawn) ---
 export type AnnotationType = "freehand" | "text" | "highlight" | "measurement";
 export type ActiveAnnotationTool = AnnotationType | null;
 export type Annotation = UserAnnotationType;
 
-// --- Image Manipulation State Types ---
 export interface ImageFiltersState {
   brightness: number;
   contrast: number;
@@ -39,7 +31,6 @@ export interface ImageTransformationsState {
   sourceCrop: CropBounds | null;
 }
 
-// --- UI Panel Visibility ---
 export interface ToolUIState {
   showBrightnessContrastPanel: boolean;
   showZoomPanel: boolean;
@@ -48,15 +39,12 @@ export interface ToolUIState {
   showTextConfigPanel: boolean;
 }
 
-// --- Undo System State ---
 interface UndoableState {
   imageFilters: ImageFiltersState;
   imageTransformations: ImageTransformationsState;
   annotations: Annotation[];
-  // editedDicomMeta could be added here if its changes should be undoable
 }
 
-// --- Main ToolStore State Interface ---
 export interface ToolState {
   imageFilters: ImageFiltersState;
   imageTransformations: ImageTransformationsState;
@@ -70,25 +58,17 @@ export interface ToolState {
   getCanvasAsDataURL: (() => string | undefined) | null;
   getOriginalDicomBlob: (() => Blob | null) | null;
   undoStack: UndoableState[];
-
-  // AI Specific (Roboflow)
   aiAnnotations: AiStoreAnnotations;
-  // isAiLoading: Record<"detection" | "segmentation" | "classification", boolean>; // OLD
-  isAiLoading: Record<"detection", boolean>; // NEW - only detection from Roboflow
+  isAiLoading: Record<"detection", boolean>;
   aiError: string | null;
-
-  // LLM Report Specific
   diagnosticReport: string | null;
   isReportLoading: boolean;
   reportError: string | null;
-
-  // Annotation style options
   freehandColor: string;
   freehandStrokeWidth: number;
   textAnnotationColor: string;
   textAnnotationFontSize: number;
 
-  // Actions
   setImageFilter: <K extends keyof ImageFiltersState>(
     filter: K,
     value: ImageFiltersState[K],
@@ -133,35 +113,33 @@ export interface ToolState {
   toggleMetadataEditor: () => void;
   toggleTextConfigPanel: (show?: boolean) => void;
   initializeEditedMetadata: (originalMeta: DicomMeta | null) => void;
-  updateEditedMetadataField: (field: keyof DicomMeta, value: any) => void;
+  updateEditedMetadataField: (
+    field: keyof DicomMeta,
+    value: string | number | null | [number, number],
+  ) => void;
   clearEditedMetadata: () => void;
   setCanvasExporter: (exporter: (() => string | undefined) | null) => void;
   setOriginalDicomDownloader: (downloader: (() => Blob | null) | null) => void;
   pushToUndoStack: () => void;
   undoLastAction: () => void;
   canUndo: () => boolean;
-
-  runAiAnalysis: (modelType: "detection") => Promise<void>; // Only "detection" now
+  runAiAnalysis: (modelType: "detection") => Promise<void>;
   setAiAnnotationVisibility: (
-    type: "detections", // Only "detections"
+    type: "detections",
     idOrLabel: string,
     visible: boolean,
   ) => void;
-  toggleAllAiVisibility: (modelType: "detections", visible: boolean) => void; // Only "detections"
+  toggleAllAiVisibility: (modelType: "detections", visible: boolean) => void;
   clearAiAnnotations: () => void;
-
-  generateAndFetchReport: () => Promise<void>; // New LLM action
-
+  generateAndFetchReport: () => Promise<void>;
   resetAllFiltersAndTransforms: () => void;
   resetAllToolRelatedState: () => void;
-
   setFreehandColor: (color: string) => void;
   setFreehandStrokeWidth: (width: number) => void;
   setTextAnnotationColor: (color: string) => void;
   setTextAnnotationFontSize: (size: number) => void;
 }
 
-// --- Initial State Values ---
 export const initialImageFilters: ImageFiltersState = {
   brightness: 0,
   contrast: 0,
@@ -183,19 +161,13 @@ export const initialToolUIState: ToolUIState = {
   showTextConfigPanel: false,
 };
 const initialUserAnnotations: Annotation[] = [];
-
-// AiStoreAnnotations now only meaningfully contains detections
 const initialAiAnnotations: AiStoreAnnotations = {
   detections: [],
-  segmentations: [], // Will remain empty
-  classifications: [], // Will remain empty
+  segmentations: [],
+  classifications: [],
 };
-
-// isAiLoading now only tracks detection
 const initialIsAiLoading = {
   detection: false,
-  // segmentation: false, // Removed
-  // classification: false, // Removed
 };
 
 const RELEVANT_METADATA_FIELDS_FOR_EDITING: Array<keyof DicomMeta> = [
@@ -204,6 +176,9 @@ const RELEVANT_METADATA_FIELDS_FOR_EDITING: Array<keyof DicomMeta> = [
   "modality",
   "window_center",
   "window_width",
+  "rows",
+  "columns",
+  "pixel_spacing",
 ];
 
 const getCurrentUndoableState = (get: () => ToolState): UndoableState => ({
@@ -211,6 +186,40 @@ const getCurrentUndoableState = (get: () => ToolState): UndoableState => ({
   imageTransformations: { ...get().imageTransformations },
   annotations: [...get().annotations.map((ann) => ({ ...ann }))],
 });
+
+const createInitialEditableMeta = (
+  sourceMeta: DicomMeta | null,
+): Partial<DicomMeta> | null => {
+  if (!sourceMeta) return null;
+  const initialEdits: Partial<DicomMeta> = {};
+  RELEVANT_METADATA_FIELDS_FOR_EDITING.forEach((key) => {
+    const val = sourceMeta[key];
+    if (key === "patient_id" || key === "study_date" || key === "modality") {
+      initialEdits[key] = String(val ?? "");
+    } else if (key === "window_center" || key === "window_width") {
+      initialEdits[key] =
+        val === null || val === undefined
+          ? null
+          : typeof val === "number"
+            ? val
+            : null;
+    } else if (key === "rows" || key === "columns") {
+      initialEdits[key] = typeof val === "number" ? val : 0;
+    } else if (key === "pixel_spacing") {
+      if (
+        Array.isArray(val) &&
+        val.length === 2 &&
+        typeof val[0] === "number" &&
+        typeof val[1] === "number"
+      ) {
+        initialEdits[key] = [val[0], val[1]];
+      } else {
+        initialEdits[key] = [0, 0];
+      }
+    }
+  });
+  return initialEdits;
+};
 
 export const useToolStore = create<ToolState>((set, get) => ({
   imageFilters: { ...initialImageFilters },
@@ -225,15 +234,12 @@ export const useToolStore = create<ToolState>((set, get) => ({
   getCanvasAsDataURL: null,
   getOriginalDicomBlob: null,
   undoStack: [],
-
   aiAnnotations: { ...initialAiAnnotations },
   isAiLoading: { ...initialIsAiLoading },
   aiError: null,
-
   diagnosticReport: null,
   isReportLoading: false,
   reportError: null,
-
   freehandColor: "#FFFF00",
   freehandStrokeWidth: 2,
   textAnnotationColor: "#00FF00",
@@ -470,6 +476,7 @@ export const useToolStore = create<ToolState>((set, get) => ({
       let newEditedMeta = state.editedDicomMeta;
       let newActiveAnnotationTool = state.activeAnnotationTool;
       const newToolUIState = { ...state.toolUIState };
+
       if (newShowEditorState) {
         Object.keys(newToolUIState).forEach((k) => {
           const key = k as keyof ToolUIState;
@@ -478,18 +485,7 @@ export const useToolStore = create<ToolState>((set, get) => ({
         newActiveAnnotationTool = null;
         const originalMetaFromDicomStore =
           useDicomStore.getState().dicomData?.meta || null;
-        if (originalMetaFromDicomStore) {
-          const initialEdits: Partial<DicomMeta> = {};
-          RELEVANT_METADATA_FIELDS_FOR_EDITING.forEach((key) => {
-            if (originalMetaFromDicomStore[key] !== undefined) {
-              initialEdits[key as keyof DicomMeta] =
-                originalMetaFromDicomStore[key];
-            }
-          });
-          newEditedMeta = initialEdits;
-        } else {
-          newEditedMeta = null;
-        }
+        newEditedMeta = createInitialEditableMeta(originalMetaFromDicomStore);
       }
       newToolUIState.showMetadataEditor = newShowEditorState;
       return {
@@ -511,41 +507,48 @@ export const useToolStore = create<ToolState>((set, get) => ({
     }));
   },
   initializeEditedMetadata: (originalMeta) => {
-    if (originalMeta) {
-      const initialEdits: Partial<DicomMeta> = {};
-      RELEVANT_METADATA_FIELDS_FOR_EDITING.forEach((key) => {
-        if (originalMeta[key] !== undefined) {
-          initialEdits[key as keyof DicomMeta] = originalMeta[key];
-        }
-      });
-      set({ editedDicomMeta: initialEdits });
-    } else {
-      set({ editedDicomMeta: null });
-    }
+    set({ editedDicomMeta: createInitialEditableMeta(originalMeta) });
   },
   updateEditedMetadataField: (field, value) => {
     set((state) => {
       if (!state.editedDicomMeta) return {};
-      let processedValue = value;
-      const originalMetaValue =
-        useDicomStore.getState().dicomData?.meta?.[field];
+      const newEditedMeta = { ...state.editedDicomMeta };
+      let processedValue: string | number | [number, number] | null;
+
       if (
-        typeof originalMetaValue === "number" ||
-        field === "window_center" ||
-        field === "window_width"
+        field === "patient_id" ||
+        field === "study_date" ||
+        field === "modality"
       ) {
+        processedValue = String(value ?? "");
+      } else if (field === "window_center" || field === "window_width") {
         if (value === "" || value === null || value === undefined) {
           processedValue = null;
         } else {
-          const num = parseFloat(value);
-          processedValue = isNaN(num)
-            ? (state.editedDicomMeta[field] ?? null)
-            : num;
+          const num = parseFloat(String(value));
+          processedValue = isNaN(num) ? null : num;
         }
+      } else if (field === "rows" || field === "columns") {
+        const num = parseInt(String(value), 10);
+        processedValue = isNaN(num) ? (state.editedDicomMeta[field] ?? 0) : num;
+      } else if (field === "pixel_spacing") {
+        if (
+          Array.isArray(value) &&
+          value.length === 2 &&
+          typeof value[0] === "number" &&
+          typeof value[1] === "number"
+        ) {
+          processedValue = value as [number, number];
+        } else {
+          processedValue = (state.editedDicomMeta[field] as
+            | [number, number]
+            | undefined) ?? [0, 0];
+        }
+      } else {
+        processedValue = value as any;
       }
-      return {
-        editedDicomMeta: { ...state.editedDicomMeta, [field]: processedValue },
-      };
+      (newEditedMeta as any)[field] = processedValue;
+      return { editedDicomMeta: newEditedMeta };
     });
   },
   clearEditedMetadata: () => {
@@ -581,22 +584,19 @@ export const useToolStore = create<ToolState>((set, get) => ({
   canUndo: () => {
     return get().undoStack.length > 0;
   },
-
   runAiAnalysis: async (modelType) => {
-    // modelType will only be "detection"
     const dicomId = useDicomStore.getState().dicomData?.id;
     if (!dicomId) {
       set({ aiError: "No DICOM image loaded to analyze." });
       return;
     }
     set((state) => ({
-      isAiLoading: { detection: true }, // Only detection loading
-      aiError: null, // Clear general AI error
-      diagnosticReport: null, // Clear previous report
+      isAiLoading: { detection: true },
+      aiError: null,
+      diagnosticReport: null,
       isReportLoading: false,
       reportError: null,
       aiAnnotations: {
-        // Clear all previous AI results
         detections: [],
         segmentations: [],
         classifications: [],
@@ -610,8 +610,8 @@ export const useToolStore = create<ToolState>((set, get) => ({
       set((state) => {
         const newAiAnnotations: AiStoreAnnotations = {
           detections: [],
-          segmentations: [], // Keep empty
-          classifications: [], // Keep empty
+          segmentations: [],
+          classifications: [],
         };
         if (modelType === "detection" && result.detection?.boxes) {
           newAiAnnotations.detections = result.detection.boxes.map((box) => ({
@@ -646,9 +646,7 @@ export const useToolStore = create<ToolState>((set, get) => ({
       });
     }
   },
-
   setAiAnnotationVisibility: (type, idOrLabel, visible) => {
-    // type will only be "detections"
     set((state) => {
       const newAiAnnotations = { ...state.aiAnnotations };
       if (type === "detections") {
@@ -659,13 +657,10 @@ export const useToolStore = create<ToolState>((set, get) => ({
               : item,
         );
       }
-      // No need to handle segmentation or classification as they are not used
       return { aiAnnotations: newAiAnnotations };
     });
   },
-
   toggleAllAiVisibility: (modelType, visible) => {
-    // modelType will only be "detections"
     set((state) => {
       const newAiAnns = { ...state.aiAnnotations };
       if (modelType === "detections") {
@@ -674,27 +669,22 @@ export const useToolStore = create<ToolState>((set, get) => ({
           visible,
         }));
       }
-      // No need to handle segmentation or classification
       return { aiAnnotations: newAiAnns };
     });
   },
-
   clearAiAnnotations: () => {
     set({
-      aiAnnotations: { ...initialAiAnnotations }, // Resets detections to empty, others already empty
+      aiAnnotations: { ...initialAiAnnotations },
       isAiLoading: { ...initialIsAiLoading },
       aiError: null,
-      // Also clear report when AI annotations are cleared
       diagnosticReport: null,
       isReportLoading: false,
       reportError: null,
     });
   },
-
   generateAndFetchReport: async () => {
     const dicomId = useDicomStore.getState().dicomData?.id;
     const currentAiDetections = get().aiAnnotations.detections;
-
     if (!dicomId) {
       set({
         reportError: "DICOM ID not found. Cannot generate report.",
@@ -702,9 +692,7 @@ export const useToolStore = create<ToolState>((set, get) => ({
       });
       return;
     }
-
     set({ isReportLoading: true, reportError: null, diagnosticReport: null });
-
     try {
       const reportText = await fetchDiagnosticReport(
         dicomId,
@@ -724,7 +712,6 @@ export const useToolStore = create<ToolState>((set, get) => ({
       });
     }
   },
-
   resetAllFiltersAndTransforms: () => {
     const currentFilters = get().imageFilters;
     const currentTransforms = get().imageTransformations;
@@ -764,7 +751,6 @@ export const useToolStore = create<ToolState>((set, get) => ({
       textAnnotationFontSize: 16,
     });
   },
-
   setFreehandColor: (color) => set({ freehandColor: color }),
   setFreehandStrokeWidth: (width) =>
     set({ freehandStrokeWidth: Math.max(1, Math.min(width, 50)) }),
