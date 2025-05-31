@@ -7,8 +7,11 @@ import {
 } from "../types/ai";
 import { DicomMeta } from "../types";
 
+const BACKEND_BASE_URL =
+  process.env.NEXT_PUBLIC_BACKEND_URL || "https://daant.onrender.com";
+
 const apiClient = axios.create({
-  baseURL: "/", // Or your specific API base URL if not using Next.js rewrites effectively
+  baseURL: BACKEND_BASE_URL,
 });
 
 export const uploadDicom = async (file: File): Promise<string> => {
@@ -31,22 +34,15 @@ export const fetchDicomImagePayload = async (
   return response.data;
 };
 
-// --- CORRECTED fetchAiAnalysis ---
-// This function now specifically calls the "detection" model type,
-// as that's what your backend is configured for with Roboflow.
 export const fetchAiAnalysis = async (
   dicomId: string,
-  // modelType: "detection" | "segmentation" | "classification", // OLD - too general
-  modelType: "detection", // NEW - Now explicitly "detection"
+  modelType: "detection",
 ): Promise<AiAnalysisResult> => {
-  // The backend route /api/v1/dicom/{dicom_id}/ai/{model_type}
-  // will only accept "detection" as a valid model_type now.
   const response = await apiClient.post<AiAnalysisResult>(
-    `/api/v1/dicom/${dicomId}/ai/${modelType}`, // modelType will be "detection"
+    `/api/v1/dicom/${dicomId}/ai/${modelType}`,
   );
   return response.data;
 };
-// --- END CORRECTION ---
 
 export const exportModifiedDicom = async (
   dicomId: string,
