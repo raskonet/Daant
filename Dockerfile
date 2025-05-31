@@ -1,20 +1,36 @@
-# Stage 2: Runtime - Sets up the final image with the application code and venv
-FROM python:3.10-slim-buster AS runtime
+# Stage 1: Builder - Installs dependencies into a virtual environment
+FROM python:3.10-slim-buster AS builder   # <--- THIS DEFINES THE 'builder' STAGE
 
-# Install libGL.so.1 and other common OpenCV dependencies
+WORKDIR /app_builder
+
+# Copy only the requirements file first to leverage Docker layer caching
+COPY requirements.txt .
+
+# Create and activate a virtual environment
+RUN python -m venv /opt/venv
+# ENV PATH="/opt/venv/bin:$PATH" # This ENV PATH is only for this builder stage, not strictly needed here if pip is called with full path or venv is activated
+
+# Install Python dependencies into the virtual environment using the venv's pip
+RUN /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+# Or, alternatively:
+# RUN . /opt/venv/bin/activate && pip install --no-cache-dir -r requirements.txt
+
+
+# Stage 2: Runtime - Sets up the final image with the application code and venv
+FROM python:3.10-slim-buster AS runtime # Naming this stage is optional but fine
+
+# Install system dependencies needed by OpenCV (imported by inference_sdk)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1-mesa-glx \
     libglib2.0-0 \
-    # Add other potential dependencies if errors persist for other .so files
-    # For example, sometimes libsm6, libxext6, libxrender-dev are needed
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy the virtual environment from the builder stage
-COPY --from=builder /opt/venv /opt/venv
+# Copy the virtual environment from the stage named 'builder'
+COPY --from=builder /opt/venv /opt/venv   # <--- THIS REFERS TO THE STAGE DEFINED ABOVE
 
-# Add the virtual environment to the PATH
+# Add the virtual environment to the PATH for the runtime stage
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Copy your application code.
