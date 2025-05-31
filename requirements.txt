@@ -1,21 +1,16 @@
-    fastapi==0.104.1
+fastapi==0.104.1
+# mangum==0.17.0 # Likely NOT needed for Render if using Gunicorn/Uvicorn
+python-multipart==0.0.6
+pydantic
+pydantic-settings
+pydicom
+numpy
+Pillow
+opencv-python-headless # Only if absolutely needed and after size testing
+pylibjpeg>=2.0
+pylibjpeg-libjpeg>=2.1
+inference-sdk # For Roboflow
 
-    mangum==0.17.0 
-
-    python-multipart==0.0.6
-
-    pydantic
-
-    pydantic-settings
-
-    pydicom
-
-    numpy
-
-    Pillow
-
-    inference-sdk 
-
-    pylibjpeg>=2.0
-
-    pylibjpeg-libjpeg>=2.1
+# Production Server:
+gunicorn
+uvicorn # As a Gunicorn worker dependency
